@@ -435,10 +435,25 @@ class AutoSortPage(ctk.CTkFrame):
         self.evt_status = ctk.StringVar(value="👆 点上面黑色按钮一键开始")
         ctk.CTkLabel(btn_card, textvariable=self.evt_status, font=font_safe(12),
                      text_color=COLORS["text_secondary"]).pack(anchor="w", padx=20, pady=(0, 4))
-        self.evt_progress = ctk.CTkProgressBar(btn_card, progress_color=COLORS["primary"],
+        # 双进度条：当前事件 + 总进度
+        prog_frame = ctk.CTkFrame(btn_card, fg_color="transparent")
+        prog_frame.pack(fill="x", padx=20, pady=(0, 4))
+        ctk.CTkLabel(prog_frame, text="当前事件", font=font_safe(10),
+                     text_color=COLORS["text_secondary"], width=60).pack(side="left")
+        self.evt_progress = ctk.CTkProgressBar(prog_frame, progress_color=COLORS["primary"],
                                                fg_color=COLORS["border_light"], height=6)
         self.evt_progress.set(0)
-        self.evt_progress.pack(fill="x", padx=20, pady=(0, 12))
+        self.evt_progress.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        overall_frame = ctk.CTkFrame(btn_card, fg_color="transparent")
+        overall_frame.pack(fill="x", padx=20, pady=(0, 12))
+        self.evt_overall_label = ctk.CTkLabel(overall_frame, text="总进度", font=font_safe(10),
+                     text_color=COLORS["text_secondary"], width=60)
+        self.evt_overall_label.pack(side="left")
+        self.evt_overall_progress = ctk.CTkProgressBar(overall_frame, progress_color=COLORS["accent"],
+                                               fg_color=COLORS["border_light"], height=6)
+        self.evt_overall_progress.set(0)
+        self.evt_overall_progress.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
         # ═══ 4. 规则自定义（可折叠，默认隐藏）═══
         rules_card = ctk.CTkFrame(p, **card_frame_style())
@@ -858,6 +873,8 @@ class AutoSortPage(ctk.CTkFrame):
         self.evt_stop_btn.configure(state="normal")
         self.evt_status.set("⏳ 分析中...")
         self.evt_progress.set(0)
+        self.evt_overall_progress.set(0)
+        self.app.set_task_running(True, "事件整理中")
 
         def _run():
             try:
@@ -872,6 +889,7 @@ class AutoSortPage(ctk.CTkFrame):
                 self.engine.run(
                     log=lambda m: self._safe_after(lambda: self._log(m)),
                     prog=lambda c, t: self._safe_after(lambda: self._update_evt_progress(c, t)),
+                    overall=lambda c, t: self._safe_after(lambda: self._update_overall_progress(c, t)),
                     on_event=lambda n, d: self._safe_after(
                         lambda: self.evt_status.set(f"⏳ {n} ({d}张)"))
                 )
@@ -879,6 +897,8 @@ class AutoSortPage(ctk.CTkFrame):
             except Exception as e:
                 self._safe_after(lambda: self._log(f"❌ {e}"))
                 self._safe_after(lambda: self._evt_ui_state(True))
+            finally:
+                self._safe_after(lambda: self.app.set_task_running(False))
 
         self.sort_thread = threading.Thread(target=_run, daemon=True)
         self.sort_thread.start()
@@ -941,6 +961,8 @@ class AutoSortPage(ctk.CTkFrame):
         else:
             self.evt_status.set(f"✅ {s.get('events',0)}事件 A={s.get('A',0)} B={s.get('B',0)} C={s.get('C',0)}")
         self.evt_progress.set(1)
+        self.evt_overall_progress.set(1)
+        self.evt_overall_label.configure(text="总进度 完成")
 
         # 有输出文件时提供限时撤销
         if self.engine and getattr(self.engine, "_dests", None):
@@ -1000,6 +1022,15 @@ class AutoSortPage(ctk.CTkFrame):
     def _update_evt_progress(self, cur, total):
         if total > 0:
             self.evt_progress.set(cur / total)
+
+    def _update_overall_progress(self, cur, total):
+        if total > 0:
+            ratio = cur / total
+            self.evt_overall_progress.set(ratio)
+            self.evt_overall_label.configure(text=f"总进度 {cur}/{total}")
+            self.app.update_task_progress(ratio)
+        else:
+            self.evt_overall_label.configure(text="总进度")
 
     # ═══════════════════════════════════════
     #  共用
@@ -1135,12 +1166,14 @@ class AutoSortPage(ctk.CTkFrame):
         self.btn_stop.configure(state="normal")
         self.progress_bar.set(0)
         self.status_var.set("准备中...")
+        self.app.set_task_running(True, "内容分类中")
         self.engine = SorterEngine(
             self.app.config_manager.config,
             log_callback=self._log,
             progress_callback=lambda c, t, f: self._safe_after(lambda: (
                 self.progress_bar.set(c / t if t else 0),
-                self.status_var.set(f"{c}/{t}：{f}")
+                self.status_var.set(f"{c}/{t}：{f}"),
+                self.app.update_task_progress(c / t if t else 0)
             )),
             finished_callback=self._cat_finished
         )
@@ -1159,6 +1192,7 @@ class AutoSortPage(ctk.CTkFrame):
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
         self.status_var.set("完成" if ok else "失败")
+        self.app.set_task_running(False)
         if ok:
             self.progress_bar.set(1)
             self._refresh_model_list()

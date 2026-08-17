@@ -502,10 +502,11 @@ class EventPipeline:
         Checkpoint.clear(self.output)
         return removed
 
-    def run(self, log=None, prog=None, on_event=None):
+    def run(self, log=None, prog=None, on_event=None, overall=None):
         log = log or (lambda m: None)
         prog = prog or (lambda c, t: None)
         on_event = on_event or (lambda n, d: None)
+        overall = overall or (lambda c, t: None)
 
         if self.force:
             Checkpoint.clear(self.output)
@@ -563,13 +564,14 @@ class EventPipeline:
             return self
 
         # 3. 逐事件处理
+        total_evts = len(pending)
         for idx, (date, paths) in enumerate(pending.items()):
             if self._stop:
                 log("⏹ 用户停止")
                 break
 
             evt_num = idx + 1
-            total_evts = len(pending)
+            overall(evt_num, total_evts)
             log(f"\n{'─'*40}")
             log(f"📌 {evt_num}/{total_evts}  {date}  ({len(paths)}张)")
 

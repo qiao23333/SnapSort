@@ -8,11 +8,11 @@ from ui.theme import COLORS, font_safe
 def safe_after(widget, callback, delay=0):
     """线程安全 UI 调度：widget 已销毁时静默丢弃。
 
-    所有工作线程回调统一走这里，禁止在子线程直接调 root.after()。
+    CTkFrame 没有 after 方法，通过 winfo_toplevel() 拿到 Tk root 来调度。
     """
     try:
         if widget.winfo_exists():
-            widget.after(delay, callback)
+            widget.winfo_toplevel().after(delay, callback)
     except Exception:
         pass
 

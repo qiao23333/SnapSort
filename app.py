@@ -64,6 +64,7 @@ class SnapSortApp:
         self.current_page = None
         self.pages = {}
         self.nav_buttons = {}
+        self._task_running = False
 
         self._center_window()
         self._build_ui()
@@ -102,12 +103,16 @@ class SnapSortApp:
         ctk.CTkLabel(logo_frame, text="SnapSort", font=font_safe(24, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w")
         # 副标题 — 点击 5 次打开开发者面板（彩蛋）
+        # 用 CTkButton 伪装成普通文字标签，保证点击事件可靠触发
         self._dev_click_count = 0
         self._dev_click_timer = None
-        dev_label = ctk.CTkLabel(logo_frame, text="本地 AI 乔心制作", font=font_safe(13, "normal"),
-                     text_color=COLORS["text_secondary"], cursor="hand2")
-        dev_label.pack(anchor="w")
-        dev_label.bind("<Button-1>", lambda e: self._on_dev_label_click())
+        self.dev_btn = ctk.CTkButton(logo_frame, text="本地 AI 乔心制作",
+                     font=font_safe(13, "normal"),
+                     text_color=COLORS["text_secondary"],
+                     fg_color=COLORS["sidebar"], hover_color=COLORS["hover"],
+                     border_width=0, height=24, anchor="w",
+                     command=self._on_dev_label_click)
+        self.dev_btn.pack(anchor="w")
 
         # 导航按钮（macOS 风格侧边栏）
         nav_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
@@ -130,13 +135,27 @@ class SnapSortApp:
             btn.pack(fill="x", pady=(0, 6))
             self.nav_buttons[page_key] = btn
 
+        # 全局任务指示器（切页面也能看到后台任务在跑）
+        self.task_indicator = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.task_indicator.pack(fill="x", padx=12, pady=(8, 0))
+        self.task_indicator_label = ctk.CTkLabel(
+            self.task_indicator, text="", font=font_safe(11, "bold"),
+            text_color=COLORS["accent"], anchor="w")
+        self.task_indicator_label.pack(fill="x")
+        self.task_indicator_bar = ctk.CTkProgressBar(
+            self.task_indicator, progress_color=COLORS["accent"],
+            fg_color=COLORS["border_light"], height=4)
+        self.task_indicator_bar.set(0)
+        self.task_indicator_bar.pack(fill="x", pady=(4, 0))
+        self.task_indicator.pack_forget()  # 默认隐藏
+
         # 底部状态
         footer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         footer.pack(side="bottom", fill="x", padx=20, pady=20)
         ctk.CTkLabel(footer, text="本地 AI · 隐私安全",
                      font=font_safe(11, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w")
-        ctk.CTkLabel(footer, text="v3.0",
+        ctk.CTkLabel(footer, text="v3.2",
                      font=font_safe(11, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w")
 
@@ -172,6 +191,24 @@ class SnapSortApp:
         # 刷新页面数据
         if hasattr(self.pages[page_key], "refresh"):
             self.pages[page_key].refresh()
+
+    def set_task_running(self, running, label=""):
+        """全局任务状态指示器：后台任务运行/结束时切换侧栏指示器可见性。
+        切换页面不影响后台线程，但用户需要看到任务仍在跑。
+        """
+        self._task_running = running
+        if running:
+            self.task_indicator_label.configure(text=f"⚙ {label}...")
+            self.task_indicator_bar.set(0)
+            self.task_indicator.pack(fill="x", padx=12, pady=(8, 0))
+        else:
+            self.task_indicator_label.configure(text="")
+            self.task_indicator.pack_forget()
+
+    def update_task_progress(self, ratio):
+        """更新侧栏指示器的进度条（0~1）。"""
+        if self._task_running:
+            self.task_indicator_bar.set(ratio)
 
     def open_output_folder(self):
         output_dir = self.output_var.get().strip()
@@ -236,8 +273,8 @@ class SnapSortApp:
         """副标题点击 5 次打开开发者面板"""
         self._dev_click_count += 1
         if self._dev_click_timer:
-            self.after_cancel(self._dev_click_timer)
-        self._dev_click_timer = self.after(2000, lambda: setattr(self, "_dev_click_count", 0))
+            self.root.after_cancel(self._dev_click_timer)
+        self._dev_click_timer = self.root.after(2000, lambda: setattr(self, "_dev_click_count", 0))
         if self._dev_click_count >= 5:
             self._dev_click_count = 0
             self._show_dev_panel()

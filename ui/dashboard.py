@@ -258,11 +258,11 @@ class DashboardPage(ctk.CTkFrame):
         top = sum(daily.values())
         self.trend_canvas.create_text(
             w - 2, 2, anchor="ne", text=f"共 {top} 张",
-            font=("Helvetica", 9), fill=COLORS["text_secondary"])
+            font=("TkDefaultFont", 9), fill=COLORS["text_secondary"])
 
         if top == 0:
             self.trend_canvas.create_text(
-                w / 2, h / 2, text="暂无数据", font=("Helvetica", 10),
+                w / 2, h / 2, text="暂无数据", font=("TkDefaultFont", 10),
                 fill=COLORS["text_secondary"])
             return
 
@@ -276,5 +276,5 @@ class DashboardPage(ctk.CTkFrame):
             color = COLORS["primary"] if v else COLORS["border"]
             self.trend_canvas.create_rectangle(x, y0, x + bar_w, y1, fill=color, width=0)
             self.trend_canvas.create_text(
-                x + bar_w / 2, h - 8, text=d[-2:], font=("Helvetica", 8),
+                x + bar_w / 2, h - 8, text=d[-2:], font=("TkDefaultFont", 8),
                 fill=COLORS["text_secondary"])

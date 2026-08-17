@@ -5,6 +5,7 @@ import os
 import json
 import shutil
 import time
+import threading
 from pathlib import Path
 
 DEFAULT_CONFIG = {
@@ -143,10 +144,8 @@ class ConfigManager:
         self._schedule_save()
 
     def _schedule_save(self):
-        # 取消上次未触发的保存，重新计时
         if self._save_timer is not None:
             self._save_timer.cancel()
-        import threading
         self._save_timer = threading.Timer(0.5, self._debounced_save)
         self._save_timer.daemon = True
         self._save_timer.start()
@@ -154,8 +153,9 @@ class ConfigManager:
     def _debounced_save(self):
         try:
             self.save()
-        except Exception:
-            pass
+        except Exception as e:
+            from core.logger import get_logger
+            get_logger().warning("配置自动保存失败: %s", e)
 
     def flush(self):
         """立即落盘（程序退出前调用，防止丢配置）"""

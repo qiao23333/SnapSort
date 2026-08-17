@@ -5,6 +5,7 @@ import os
 import json
 import time
 import shutil
+import socket
 from datetime import datetime
 from pathlib import Path
 
@@ -72,8 +73,17 @@ def optimize_prompt(business_context, model, url=DEFAULT_URL):
 
 
 def check_ollama(url=DEFAULT_URL):
+    """快速检测 Ollama 是否在线：先 TCP 探测端口（毫秒级失败），再 HTTP 确认。"""
     try:
-        r = requests.get(f"{url}/api/tags", timeout=5)
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        host = p.hostname or "localhost"
+        port = p.port or 11434
+        # TCP 探测：端口未开时毫秒级返回 False，不等 HTTP 超时
+        with socket.create_connection((host, port), timeout=1):
+            pass
+        # 端口通了，HTTP 确认 Ollama 真的在响应
+        r = requests.get(f"{url}/api/tags", timeout=2)
         return r.status_code == 200
     except Exception:
         return False

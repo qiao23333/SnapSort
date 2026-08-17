@@ -7,6 +7,8 @@ venv/
 
 # 运行时数据与缓存
 data/
+!data/snapsort_icon.png
+!data/snapsort_icon_small.png
 *.log
 .snapsort_checkpoint.json
 

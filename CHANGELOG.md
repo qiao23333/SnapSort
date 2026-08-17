@@ -14,6 +14,25 @@
 ### 修复
 - 配置文件损坏时启动崩溃 → 自动备份损坏文件并回退默认值（测试发现的真 bug）
 - config.set 防抖 0.5s + 退出前 flush 强制落盘，连续设置不再每次写磁盘
+- 关键词映射缓存、参考照片编码缓存（mtime+size 失效），批量分类提速
+- VTracer 矢量路径误删用户原图的严重 bug
+- HEIC 临时文件清理补全（encode/缩略图/EXIF/格式转换/日期修正/矢量回退）
+
+## [3.2.2] - 2026-08-17
+
+### 新增
+- 双进度条设计：事件模式新增「当前事件」+「总进度」双进度条，总进度用琥珀色区分
+- 侧栏全局任务指示器：后台任务运行时侧栏显示状态+进度，切换页面也能看到任务在跑
+- EventPipeline.run() 新增 overall 回调参数，报告事件级总进度（evt_num/total_evts）
+- 内容分类模式进度也同步到侧栏指示器
+
+### 修复
+- 仪表盘 Canvas 字体 Helvetica → TkDefaultFont，修复 Windows/Linux 不兼容
+- CI 安装步骤补 openpyxl + tkinterdnd2
+- config.py `import threading` 移至文件顶部；_debounced_save 异常写入日志不再静默吞
+- 开发者面板点击 5 次无效：CTkLabel → CTkButton 伪装为文字标签；`self.after` → `self.root.after`
+- safe_after 通过 `winfo_toplevel().after()` 调度，修复 CTkFrame 无 after 方法导致后台线程回调不执行
+- AI 状态检测优化：TCP socket 预探测（毫秒级失败）+ HTTP 确认，Ollama 离线时不再等 5 秒超时
 
 ## [3.1.0] - 2026-08-16
 
