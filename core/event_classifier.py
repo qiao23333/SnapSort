@@ -386,10 +386,11 @@ class BatchRenamer:
         return f"{date}_{safe_ev}_{seq:02d}{tags_str}_{safe_ds}{ext}"
 
     @staticmethod
-    def execute(photos, event_name, output_base, log=None, prog=None, pattern=None):
+    def execute(photos, event_name, output_base, log=None, prog=None, pattern=None, collect=None):
         """
         photos: [(path, {"grade":"A","desc":"x","story":"y"}), ...]
         pattern: 自定义命名模板，None 时使用默认
+        collect: 传入 list 时收集每个输出文件路径，供撤销使用
         返回 (success, fail)。
         """
         if not photos:
@@ -425,6 +426,8 @@ class BatchRenamer:
                         c += 1
 
                 shutil.copy2(path, dest)
+                if collect is not None:
+                    collect.append(dest)
                 ok += 1
                 if prog:
                     prog(ok, len(ordered))
@@ -466,9 +469,32 @@ class EventPipeline:
         self._skipped_dates = 0
         self._total_ok = 0
         self._total_ng = 0
+        self._dests = []           # 本次生成的输出文件（供撤销）
 
     def stop(self):
         self._stop = True
+
+    def undo(self):
+        """撤销本次整理：删除生成的输出文件并清理空目录（原文件不受影响）。"""
+        removed = 0
+        dirs = set()
+        for dest in self._dests:
+            try:
+                if os.path.exists(dest):
+                    os.unlink(dest)
+                    removed += 1
+                dirs.add(os.path.dirname(dest))
+            except OSError:
+                pass
+        for d in dirs:
+            try:
+                if os.path.isdir(d) and not os.listdir(d):
+                    os.rmdir(d)
+            except OSError:
+                pass
+        self._dests = []
+        Checkpoint.clear(self.output)
+        return removed
 
     def run(self, log=None, prog=None, on_event=None):
         log = log or (lambda m: None)
@@ -588,7 +614,7 @@ class EventPipeline:
                 log("📝 重命名...")
                 ok, ng = BatchRenamer.execute(
                     results, name, self.output, log=log, prog=prog,
-                    pattern=self.rename_pattern
+                    pattern=self.rename_pattern, collect=self._dests
                 )
                 self._total_ok += ok
                 self._total_ng += ng

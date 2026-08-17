@@ -100,6 +100,16 @@ if [ "$NEED_INSTALL" -ne 0 ]; then
         exit 1
     fi
 fi
+
+# 拖拽支持（可选依赖，失败不阻塞启动）
+$PYTHON -c "import tkinterdnd2" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "ℹ️  安装拖拽支持（tkinterdnd2，可选）..."
+    $PYTHON -m pip install tkinterdnd2 >/dev/null 2>&1
+    $PYTHON -c "import tkinterdnd2" 2>/dev/null \
+        && echo "✅ 拖拽就绪：可把文件夹直接拖进窗口" \
+        || echo "ℹ️  拖拽未启用（不影响其他功能）"
+fi
 echo "✅ 依赖已就绪"
 
 # 诊断输出

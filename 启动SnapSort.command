@@ -13,7 +13,7 @@ cd "$SCRIPT_DIR" || exit 1
 
 # 优先使用 WorkBuddy 管理 Python，其次系统 python3
 PYTHON=""
-for p in "/Users/apple/.workbuddy/binaries/python/versions/3.13.12/bin/python3" "python3" "python"; do
+for p in "python3" "python"; do
     if command -v "$p" &>/dev/null; then
         if "$p" -c "import tkinter" 2>/dev/null; then
             PYTHON="$p"

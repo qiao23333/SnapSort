@@ -38,4 +38,38 @@ class StatCard(ctk.CTkFrame):
             self.value_label.configure(text=value)
         if subtitle is not None:
             self.subtitle_label.configure(text=subtitle)
-            self.subtitle_label.pack(anchor="w", padx=20, pady=(0, 16))
+
+
+class Toast(ctk.CTkToplevel):
+    """右上角轻提示：自动淡出销毁"""
+
+    def __init__(self, master, message, duration=2600):
+        super().__init__(master)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(fg_color=COLORS["text"], corner_radius=10)
+
+        ctk.CTkLabel(self, text=message, font=font_safe(13, "normal"),
+                     text_color="white", fg_color="transparent").pack(padx=18, pady=10)
+
+        self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        x = master.winfo_rootx() + master.winfo_width() - w - 24
+        y = master.winfo_rooty() + 16
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._alpha = 1.0
+        self.after(duration, self._fade_out)
+
+    def _fade_out(self):
+        self._alpha -= 0.1
+        if self._alpha <= 0:
+            self.destroy()
+            return
+        try:
+            self.attributes("-alpha", self._alpha)
+        except Exception:
+            self.destroy()
+            return
+        self.after(30, self._fade_out)

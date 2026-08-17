@@ -83,6 +83,7 @@ class SnapSortApp:
 
     def _build_ui(self):
         apply_root_theme(self.root)
+        self._setup_dnd()
 
         # 主容器
         self.container = ctk.CTkFrame(self.root, fg_color=COLORS["bg"], corner_radius=0)
@@ -184,6 +185,47 @@ class SnapSortApp:
         else:
             messagebox.showwarning("文件夹不存在", f"输出文件夹尚未创建：\n{output_dir}")
 
+    def _setup_dnd(self):
+        """拖拽文件夹到窗口 → 设为素材输入路径（需 tkinterdnd2，未安装则静默跳过）"""
+        try:
+            from tkinterdnd2 import TkinterDnD, DND_FILES
+            from tkinterdnd2.TkinterDnD import DnDWrapper
+            TkinterDnD._require(self.root)
+            # 把 DnD 全部方法注入普通 Tk root（tkinterdnd2 默认只给自家 Tk 子类）
+            for name, attr in vars(DnDWrapper).items():
+                if callable(attr):
+                    setattr(self.root, name, attr.__get__(self.root))
+                elif name.startswith("_subst_format"):
+                    setattr(self.root, name, attr)
+        except Exception:
+            return
+
+        def _on_drop(event):
+            raw = event.data.strip()
+            if raw.startswith("{"):
+                raw = raw[1:raw.index("}")] if "}" in raw else raw[1:]
+            else:
+                raw = raw.split(" ")[0]
+            if raw.startswith("file://"):
+                from urllib.parse import unquote, urlparse
+                raw = unquote(urlparse(raw).path)
+            if os.path.isdir(raw):
+                self.input_var.set(raw)
+                self.save_path_config()
+                self._show_toast(f"📂 已设置素材文件夹：{os.path.basename(raw) or raw}")
+            elif os.path.isfile(raw):
+                self._show_toast("⚠️ 拖入的是文件，请拖文件夹")
+
+        self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind("<<Drop>>", _on_drop)
+
+    def _show_toast(self, message):
+        try:
+            from ui.widgets import Toast
+            Toast(self.root, message)
+        except Exception:
+            pass
+
     def save_path_config(self):
         """保存当前输入/输出路径到配置"""
         self.config_manager.set("last_input", self.input_var.get().strip())
@@ -216,20 +258,33 @@ class SnapSortApp:
 
         sections = [
             ("项目结构", [
-                "app.py              — 主入口，侧边栏 + 页面路由",
+                "app.py              — 主入口，侧边栏 + 页面路由（点击本副标题5次打开此面板）",
                 "ui/theme.py         — 配色系统、字体、通用样式（改颜色改这里）",
-                "ui/auto_sort.py     — 自动分类页（事件模式 + 内容模式）",
-                "ui/toolbox.py       — 工具箱页（位图转矢量、以文搜图等）",
-                "ui/settings.py      — 设置页（分类配置、人物/地点、规则引擎）",
+                "ui/widgets.py       — 复用组件（Toast 提示等）",
                 "ui/dashboard.py     — 仪表盘页",
-                "ui/gallery.py       — 图库页",
+                "ui/auto_sort.py     — 自动分类页（事件模式 + 内容模式）",
+                "ui/gallery.py       — 图库页（缩略图线程池加载）",
+                "ui/toolbox.py       — 工具箱页（搜图/描述/问答/助手/查重/转换等）",
+                "ui/history_view.py  — 历史记录页",
+                "ui/settings.py      — 设置页（分类配置、人物/地点、规则引擎）",
                 "core/sorter_engine.py  — AI 分类核心引擎（prompt、分类、重试）",
                 "core/event_classifier.py — 事件聚类（日期分组、合并、命名）",
-                "core/config.py      — 配置管理（JSON 读写）",
-                "core/rule_engine.py  — 规则引擎（后处理自动化）",
-                "core/image_utils.py  — 图片处理（缩略图、HEIC、矢量转换）",
-                "core/model_info.py   — 模型类型识别（视觉/文本）",
+                "core/clip_search.py    — CLIP 语义搜图",
+                "core/rule_engine.py    — 规则引擎（后处理自动化）",
+                "core/config.py         — 配置管理（JSON 读写）",
+                "core/image_utils.py    — 图片处理（缩略图、HEIC、矢量转换）",
+                "core/model_info.py     — 模型类型识别（视觉/文本）",
                 "core/reference_manager.py — 人物/地点参考照片管理",
+                "core/report.py         — CSV/Excel 报告",
+                "core/history.py        — 历史记录存储",
+                "generate_icon.py    — 图标生成脚本（重跑即可换图标）",
+            ]),
+            ("图标修改（换图标看这里）", [
+                "图标文件: data/snapsort_icon.png（256px）/ data/snapsort_icon_small.png（64px）",
+                "直接替换这两个文件即可换图标；或改 generate_icon.py 后重新运行它",
+                "窗口标题栏图标: ui/theme.py 的 apply_root_theme()（iconphoto，自动加载）",
+                "⚠️ Dock/任务栏图标: python 直跑时永远是 Python 图标，属系统限制；",
+                "   打包为 .app/.exe 后自动使用应用图标（见下方构建发布）",
             ]),
             ("配色修改", [
                 "打开 ui/theme.py → 修改 COLORS 字典",
@@ -280,13 +335,18 @@ class SnapSortApp:
 
 
 def main():
+    from core.logger import get_logger
+    log = get_logger()
+    log.info("SnapSort 启动")
     try:
         root = ctk.CTk()
         app = SnapSortApp(root)
         root.mainloop()
+        log.info("SnapSort 正常退出")
     except Exception as e:
         import traceback
         error_msg = f"SnapSort 启动失败：\n\n{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
+        log.error("启动失败: %s", traceback.format_exc())
         try:
             messagebox.showerror("启动错误", error_msg)
         except Exception:

@@ -52,6 +52,13 @@ if errorlevel 1 (
         exit /b 1
     )
 )
+
+REM 拖拽支持（可选，失败不阻塞）
+%PYTHON% -c "import tkinterdnd2" >nul 2>&1
+if errorlevel 1 (
+    echo ℹ️  安装拖拽支持（可选）...
+    %PYTHON% -m pip install tkinterdnd2 >nul 2>&1
+)
 echo ✅ 依赖已就绪
 
 REM 启动应用

@@ -3,12 +3,13 @@ requests>=2.28.0
 Pillow>=9.0.0
 pillow-heif>=0.14.0
 openpyxl>=3.0.0
+tkinterdnd2>=0.4.2
 
-# ── 可选：以文搜图升级（CLIP 语义搜索）──
-# 安装后以文搜图从 VLM 逐张问答升级为 CLIP 向量语义搜索（快 100 倍，准 3-5 倍）
-sentence-transformers>=2.2.0
-faiss-cpu>=1.7.0
-
-# ── 可选：矢量转化升级（VTracer Rust 引擎）──
-# 安装后位图转矢量从内置 Moore 追踪升级为 VTracer（色彩保真度大幅提升）
-vtracer>=0.6.0
+# ── 以下为可选增强，按需手动安装（体积大，勿默认安装）──
+# 拖拽：tkinterdnd2（拖文件夹进窗口设为素材路径，run.sh 会自动尝试安装）
+#
+# 以文搜图升级（CLIP 语义搜索，快 100 倍准 3-5 倍）：
+# pip install sentence-transformers>=2.2.0 faiss-cpu>=1.7.0
+#
+# 矢量转化升级（VTracer Rust 引擎，色彩保真度大幅提升）：
+# pip install vtracer>=0.6.0

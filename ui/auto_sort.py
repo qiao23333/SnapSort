@@ -423,6 +423,15 @@ class AutoSortPage(ctk.CTkFrame):
                                           height=42, width=50, corner_radius=12, state="disabled")
         self.evt_stop_btn.pack(side="left", padx=(8, 0))
 
+        # 撤销按钮（完成后显示，30 秒内可撤销）
+        self.evt_undo_btn = ctk.CTkButton(inner, text="↩ 撤销本次整理",
+                                          command=self._evt_undo,
+                                          fg_color=COLORS["card"], hover_color=COLORS["hover"],
+                                          text_color=COLORS["danger"], font=font_safe(13, "bold"),
+                                          height=42, width=150, corner_radius=12,
+                                          border_color=COLORS["danger"], border_width=1)
+        self._undo_after_id = None
+
         self.evt_status = ctk.StringVar(value="👆 点上面黑色按钮一键开始")
         ctk.CTkLabel(btn_card, textvariable=self.evt_status, font=font_safe(12),
                      text_color=COLORS["text_secondary"]).pack(anchor="w", padx=20, pady=(0, 4))
@@ -568,7 +577,7 @@ class AutoSortPage(ctk.CTkFrame):
                     self.opt_prompt_status.configure(
                         text=f"❌ 优化失败：{result[:30]}",
                         text_color=COLORS["danger"])
-            self.app.root.after(0, _done)
+            self._safe_after(_done)
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -786,6 +795,8 @@ class AutoSortPage(ctk.CTkFrame):
         rename = self.evt_rename_ck.get()
         ctx = self.ctx_text.get("1.0", "end-1c").strip()
 
+        self._hide_undo_button()  # 上一轮的撤销入口失效
+
         os.makedirs(out, exist_ok=True)
         self.app.config_manager.set("model", model)
         self.app.config_manager.set("business_context", ctx)
@@ -859,15 +870,15 @@ class AutoSortPage(ctk.CTkFrame):
                                             gap_hours=4.0,
                                             max_workers=3)
                 self.engine.run(
-                    log=lambda m: self.app.root.after(0, lambda: self._log(m)),
-                    prog=lambda c, t: self.app.root.after(0, lambda: self._update_evt_progress(c, t)),
-                    on_event=lambda n, d: self.app.root.after(
-                        0, lambda: self.evt_status.set(f"⏳ {n} ({d}张)"))
+                    log=lambda m: self._safe_after(lambda: self._log(m)),
+                    prog=lambda c, t: self._safe_after(lambda: self._update_evt_progress(c, t)),
+                    on_event=lambda n, d: self._safe_after(
+                        lambda: self.evt_status.set(f"⏳ {n} ({d}张)"))
                 )
-                self.app.root.after(0, self._evt_show_result)
+                self._safe_after(self._evt_show_result)
             except Exception as e:
-                self.app.root.after(0, lambda: self._log(f"❌ {e}"))
-                self.app.root.after(0, lambda: self._evt_ui_state(True))
+                self._safe_after(lambda: self._log(f"❌ {e}"))
+                self._safe_after(lambda: self._evt_ui_state(True))
 
         self.sort_thread = threading.Thread(target=_run, daemon=True)
         self.sort_thread.start()
@@ -930,6 +941,45 @@ class AutoSortPage(ctk.CTkFrame):
         else:
             self.evt_status.set(f"✅ {s.get('events',0)}事件 A={s.get('A',0)} B={s.get('B',0)} C={s.get('C',0)}")
         self.evt_progress.set(1)
+
+        # 有输出文件时提供限时撤销
+        if self.engine and getattr(self.engine, "_dests", None):
+            self._log("↩ 30 秒内可点「撤销本次整理」删除本次输出（原文件不受影响）")
+            self._show_undo_button(30)
+
+    def _show_undo_button(self, secs=30):
+        if not hasattr(self, "evt_undo_btn"):
+            return
+        self.evt_undo_btn.pack(side="left", padx=(8, 0))
+        self._tick_undo_countdown(secs)
+
+    def _tick_undo_countdown(self, secs):
+        if getattr(self, "_undo_after_id", None):
+            self.after_cancel(self._undo_after_id)
+            self._undo_after_id = None
+        if secs <= 0:
+            self._hide_undo_button()
+            return
+        self.evt_undo_btn.configure(text=f"↩ 撤销本次整理（{secs}s）")
+        self._undo_after_id = self.after(1000, lambda: self._tick_undo_countdown(secs - 1))
+
+    def _hide_undo_button(self):
+        if getattr(self, "_undo_after_id", None):
+            self.after_cancel(self._undo_after_id)
+            self._undo_after_id = None
+        if hasattr(self, "evt_undo_btn"):
+            self.evt_undo_btn.pack_forget()
+
+    def _evt_undo(self):
+        if not self.engine:
+            return
+        if not messagebox.askyesno("撤销确认",
+                "将删除本次整理生成的输出文件（原文件不受影响）。\n\n确定撤销？"):
+            return
+        self._hide_undo_button()
+        removed = self.engine.undo()
+        self._log(f"↩ 已撤销：删除 {removed} 个输出文件，原文件未动")
+        self.evt_status.set(f"↩ 已撤销（{removed} 个文件）")
 
     # ═══════════════════════════════════════
     #  事件 辅助
@@ -1091,7 +1141,7 @@ class AutoSortPage(ctk.CTkFrame):
         self.engine = SorterEngine(
             self.app.config_manager.config,
             log_callback=self._log,
-            progress_callback=lambda c, t, f: self.app.root.after(0, lambda: (
+            progress_callback=lambda c, t, f: self._safe_after(lambda: (
                 self.progress_bar.set(c / t if t else 0),
                 self.status_var.set(f"{c}/{t}：{f}")
             )),
@@ -1106,7 +1156,7 @@ class AutoSortPage(ctk.CTkFrame):
             self.status_var.set("正在停止...")
 
     def _cat_finished(self, success, results):
-        self.app.root.after(0, lambda: self._cat_reset(success))
+        self._safe_after(lambda: self._cat_reset(success))
 
     def _cat_reset(self, ok):
         self.btn_start.configure(state="normal")

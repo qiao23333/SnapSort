@@ -104,8 +104,20 @@ class ConfigManager:
     def save(self, config=None):
         if config is None:
             config = self.config
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        # 原子写入：先写临时文件再替换，避免写入中断导致 config.json 损坏
+        tmp_path = str(self.config_path) + ".tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self.config_path)
+        except OSError:
+            # 临时文件写入失败时清理残留，保持原配置不动
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         self.config = config
 
     def get(self, key, default=None):

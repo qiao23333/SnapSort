@@ -335,8 +335,12 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
             confidence = round(kw_conf + cat_conf + desc_conf, 2)
             return category, confidence, desc, persons, places
         else:
+            from core.logger import get_logger
+            get_logger().warning("分类 HTTP 错误 %s: %s", r.status_code, os.path.basename(image_path))
             return "错误", 0.0, f"HTTP {r.status_code}", [], []
     except Exception as e:
+        from core.logger import get_logger
+        get_logger().warning("分类失败(降级为待复核) %s: %s", os.path.basename(image_path), e)
         return "错误", 0.0, str(e), [], []
 
 

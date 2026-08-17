@@ -245,25 +245,26 @@ class GalleryPage(ctk.CTkFrame):
         for w in (frame, label, name_label):
             w.bind("<Button-1>", lambda e, p=path: self._open_preview(p))
 
-        # 后台加载缩略图（带磁盘缓存，线程池限流）
-        def _load_thumb(path=path, frame=frame, name_label=name_label):
+        # 后台加载缩略图（带磁盘缓存，线程池限流；PhotoImage 必须在主线程创建）
+        def _load_thumb(path=path, frame=frame):
             if self._cancel_flag.is_set():
                 return
             thumb = _get_cached_thumbnail(path, size=(130, 130))
-            if thumb:
-                try:
-                    photo = ImageTk.PhotoImage(thumb)
-                except Exception:
-                    return
-                self._safe_after(lambda f=frame, p=photo, n=name_label, pa=path:
-                                 self._set_thumb(f, p, n, pa))
+            if thumb is not None:
+                self._safe_after(lambda f=frame, t=thumb, pa=path:
+                                 self._set_thumb(f, t, pa))
 
         future = self._thumb_executor.submit(_load_thumb)
         self._thumb_futures.append(future)
 
-    def _set_thumb(self, frame, photo, name_label, path):
+    def _set_thumb(self, frame, thumb, path):
         if self._cancel_flag.is_set():
             return
+        try:
+            photo = ImageTk.PhotoImage(thumb)
+        except Exception:
+            return
+        self.thumbnails.append(photo)  # 保持引用，防止被 GC 回收
         for w in frame.winfo_children():
             w.destroy()
         img_label = ctk.CTkLabel(frame, image=photo, text="")

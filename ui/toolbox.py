@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, scrolledtext
 from pathlib import Path
 
 import requests
+from PIL import Image
 
 from ui.theme import (
     COLORS, font_safe, primary_button_style,
@@ -34,7 +35,7 @@ class ToolboxPage(ctk.CTkFrame):
         # 标题
         ctk.CTkLabel(self, text="AI 工具箱", font=font_safe(28, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", padx=32, pady=(28, 4))
-        ctk.CTkLabel(self, text="位图转矢量 · 以文搜图 · 图片描述 · 图片问答 · 智能助手 · 重复检测 · 格式转换 · EXIF查看 · 日期修正",
+        ctk.CTkLabel(self, text="搜图 · 描述 · 问答 · 助手 · 查重 · 格式转换 · EXIF · 日期修正 · 批量处理 · 矢量 · 重命名",
                      font=font_safe(14, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w", padx=32, pady=(0, 24))
 
@@ -73,6 +74,7 @@ class ToolboxPage(ctk.CTkFrame):
             ("🎨 位图转矢量", "vectorize"),
             ("💬 图片问答", "visual_qa"),
             ("🤖 智能助手", "smart_assistant"),
+            ("📐 批量处理", "batch_process"),
             ("🏷 自定义重命名", "custom_rename"),
             ("📋 EXIF 查看", "exif_view"),
         ]
@@ -175,6 +177,8 @@ class ToolboxPage(ctk.CTkFrame):
             self._build_exif_view()
         elif tool_key == "date_fix":
             self._build_date_fix()
+        elif tool_key == "batch_process":
+            self._build_batch_process()
 
         self._on_model_change(self.toolbox_model_var.get())
 
@@ -654,22 +658,44 @@ class ToolboxPage(ctk.CTkFrame):
         ctk.CTkButton(sel_row, text="选择图片", command=self._choose_qa_image,
                       width=100, **secondary_button_style()).pack(side="left")
 
+        # 常用问题快捷标签
+        quick_row = ctk.CTkFrame(card, fg_color="transparent")
+        quick_row.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(quick_row, text="常用问题", font=font_safe(13, "normal"),
+                     text_color=COLORS["text_secondary"]).pack(side="left")
+        for q in ["图中有几个人？", "这是什么场景？", "图中有哪些文字？", "适合做什么用途？"]:
+            ctk.CTkButton(quick_row, text=q, command=lambda qq=q: self.qa_input_var.set(qq),
+                          height=28, font=font_safe(11, "normal"),
+                          fg_color=COLORS["card"], hover_color=COLORS["hover"],
+                          text_color=COLORS["text"], corner_radius=6,
+                          border_color=COLORS["border_light"], border_width=1).pack(side="left", padx=(8, 0))
+
         input_row = ctk.CTkFrame(card, fg_color="transparent")
         input_row.pack(fill="x", padx=24, pady=(0, 12))
         self.qa_input_var = ctk.StringVar(value="")
-        ctk.CTkEntry(input_row, textvariable=self.qa_input_var, font=font_safe(13, "normal"),
+        self.qa_entry = ctk.CTkEntry(input_row, textvariable=self.qa_input_var, font=font_safe(13, "normal"),
                      height=36, fg_color="white", border_color=COLORS["border"],
-                     placeholder_text="输入你的问题...").pack(side="left", fill="x", expand=True, padx=(0, 12))
+                     placeholder_text="输入你的问题，回车发送...")
+        self.qa_entry.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self.qa_entry.bind("<Return>", lambda e: self._run_qa())
         ctk.CTkButton(input_row, text="发送", command=self._run_qa,
                       width=80, **primary_button_style()).pack(side="left")
+        ctk.CTkButton(input_row, text="清空对话", command=self._clear_qa_history,
+                      **secondary_button_style()).pack(side="left", padx=(8, 0))
 
         chat_area = ctk.CTkFrame(card, fg_color=COLORS["bg"], corner_radius=8)
         chat_area.pack(fill="both", expand=True, padx=24, pady=(0, 20))
-        self.qa_history = scrolledtext.ScrolledText(chat_area, wrap="word",
+        self.qa_history = scrolledtext.ScrolledText(chat_area, wrap="word", height=16,
                                                     font=("SF Mono", 12), bg="#f8f9fa",
                                                     fg="#1D1D1F", relief="flat")
         self.qa_history.pack(fill="both", expand=True, padx=8, pady=8)
         self.qa_history.insert("1.0", "🤖 请选择图片并输入问题\n")
+        self.qa_history.config(state="disabled")
+
+    def _clear_qa_history(self):
+        self.qa_history.config(state="normal")
+        self.qa_history.delete("1.0", "end")
+        self.qa_history.insert("1.0", "🤖 对话已清空，请选择图片并输入问题\n")
         self.qa_history.config(state="disabled")
 
     def _choose_qa_image(self):
@@ -763,17 +789,18 @@ class ToolboxPage(ctk.CTkFrame):
                           text_color=COLORS["text"], corner_radius=6,
                           border_color=COLORS["border_light"], border_width=1).pack(side="left", padx=(8, 0))
 
-        # 输入区
+        # 输入区（初始4行，随内容自动增高）
         input_frame = ctk.CTkFrame(card, fg_color="transparent")
         input_frame.pack(fill="x", padx=24, pady=(0, 8))
         self.assistant_input = scrolledtext.ScrolledText(input_frame, wrap="word",
                                                           font=("SF Mono", 12), bg="#f8f9fa",
-                                                          fg="#999999", relief="flat", height=80)
+                                                          fg="#999999", relief="flat", height=4)
         self.assistant_input.pack(fill="x")
         self._assistant_placeholder = True
         self.assistant_input.insert("1.0", "在此输入内容，或点击上方快捷功能...")
         self.assistant_input.bind("<FocusIn>", self._assistant_on_focus_in)
         self.assistant_input.bind("<FocusOut>", self._assistant_on_focus_out)
+        self.assistant_input.bind("<KeyRelease>", self._assistant_auto_grow)
 
         # 发送按钮
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
@@ -794,6 +821,19 @@ class ToolboxPage(ctk.CTkFrame):
         self.assistant_result.pack(fill="both", expand=True, padx=8, pady=8)
         self.assistant_result.insert("1.0", "AI 回复将显示在这里...")
         self.assistant_result.config(state="disabled")
+
+    def _assistant_auto_grow(self, event=None):
+        """输入框随内容行数自动增高（4~15行）"""
+        try:
+            if self._assistant_placeholder:
+                return
+            end_index = self.assistant_input.index("end-1c")
+            line_count = int(end_index.split(".")[0])
+            new_height = max(4, min(15, line_count + 1))
+            if new_height != int(self.assistant_input.cget("height")):
+                self.assistant_input.configure(height=new_height)
+        except Exception:
+            pass
 
     def _assistant_on_focus_in(self, event=None):
         """输入框获得焦点时清除占位文本"""
@@ -820,6 +860,7 @@ class ToolboxPage(ctk.CTkFrame):
         self.assistant_input.see("end")
         self.assistant_input.focus_set()
         self.assistant_input.mark_set("insert", "end")
+        self._assistant_auto_grow()
 
     def _run_assistant(self):
         # 获取输入文本，跳过占位符
@@ -931,23 +972,36 @@ class ToolboxPage(ctk.CTkFrame):
         btn_row.pack(fill="x", padx=24, pady=(0, 12))
         ctk.CTkButton(btn_row, text="🔍 开始检测", command=self._run_dedup,
                       **primary_button_style()).pack(side="left", padx=(0, 12))
+        # 检测模式：精确 / 相似
+        self.dedup_mode_var = ctk.StringVar(value="exact")
+        mode_menu = ctk.CTkSegmentedButton(btn_row, values=["精确重复", "相似图片"],
+                                           variable=self.dedup_mode_var,
+                                           font=font_safe(12, "normal"),
+                                           selected_color=COLORS["primary"],
+                                           selected_hover_color=COLORS["primary_hover"],
+                                           unselected_color=COLORS["card"],
+                                           command=lambda v: self.dedup_mode_var.set(
+                                               "exact" if v == "精确重复" else "similar"))
+        mode_menu.pack(side="left", padx=(0, 12))
         self.dedup_status_var = ctk.StringVar(value="")
         ctk.CTkLabel(btn_row, textvariable=self.dedup_status_var,
                      font=font_safe(12, "normal"),
                      text_color=COLORS["text_secondary"]).pack(side="left")
 
-        # 结果区：滚动框架 + 每行带操作按钮
-        result_scroll = ctk.CTkScrollableFrame(card, fg_color=COLORS["bg"], height=300)
-        result_scroll.pack(fill="both", expand=True, padx=24, pady=(0, 20))
-        self.dedup_result = scrolledtext.ScrolledText(result_scroll, wrap="word",
+        # 结果摘要区（初始紧凑，检测后展开）
+        self.dedup_result = scrolledtext.ScrolledText(card, wrap="word",
                                                        font=("SF Mono", 12), bg="#f8f9fa",
-                                                       fg="#1D1D1F", relief="flat", height=60)
-        self.dedup_result.pack(fill="x", padx=0, pady=(0, 8))
-        self.dedup_result.insert("1.0", "重复图片列表将显示在这里...")
+                                                       fg="#1D1D1F", relief="flat", height=5)
+        self.dedup_result.pack(fill="x", padx=24, pady=(0, 8))
+        self.dedup_result.insert("1.0",
+            "选择文件夹后点「开始检测」。\n"
+            "· 精确重复：MD5 完全相同（同一次复制/导出）\n"
+            "· 相似图片：视觉相似（截图有轻微变化、压缩过、尺寸不同也能检出，稍慢）")
         self.dedup_result.config(state="disabled")
 
-        # 操作按钮容器
-        self.dedup_actions_frame = ctk.CTkFrame(result_scroll, fg_color="transparent")
+        # 结果列表：每组重复带操作按钮（初始隐藏，检测出重复后再显示）
+        self.result_scroll = ctk.CTkScrollableFrame(card, fg_color=COLORS["bg"])
+        self.dedup_actions_frame = ctk.CTkFrame(self.result_scroll, fg_color="transparent")
         self.dedup_actions_frame.pack(fill="both", expand=True)
         self._dedup_duplicate_list = []  # 缓存重复列表，供操作按钮使用
 
@@ -956,16 +1010,38 @@ class ToolboxPage(ctk.CTkFrame):
         if path:
             self.dedup_dir_var.set(path)
 
+    @staticmethod
+    def _dhash(path, hash_size=8):
+        """感知哈希：截图轻微变化/压缩/缩放后哈希仍接近"""
+        try:
+            with Image.open(path) as im:
+                im = im.convert("L").resize((hash_size + 1, hash_size))
+                pixels = list(im.getdata())
+            bits = []
+            for row in range(hash_size):
+                for col in range(hash_size):
+                    left = pixels[row * (hash_size + 1) + col]
+                    right = pixels[row * (hash_size + 1) + col + 1]
+                    bits.append("1" if left > right else "0")
+            return int("".join(bits), 2)
+        except Exception:
+            return None
+
     def _run_dedup(self):
         search_dir = self.dedup_dir_var.get().strip()
         if not os.path.isdir(search_dir):
             messagebox.showwarning("路径错误", "目录不存在")
             return
 
-        self.dedup_status_var.set("正在扫描...")
+        mode = self.dedup_mode_var.get()
         self.dedup_result.config(state="normal")
         self.dedup_result.delete("1.0", "end")
-        self.dedup_result.insert("end", "🔍 正在扫描图片并计算哈希...\n")
+        if mode == "similar":
+            self.dedup_status_var.set("正在计算感知哈希...")
+            self.dedup_result.insert("end", "🔍 正在计算感知哈希（相似检测较慢，请稍候）...\n")
+        else:
+            self.dedup_status_var.set("正在扫描...")
+            self.dedup_result.insert("end", "🔍 正在扫描图片并计算 MD5...\n")
         self.dedup_result.config(state="disabled")
 
         def _scan():
@@ -982,15 +1058,41 @@ class ToolboxPage(ctk.CTkFrame):
                     if total % 50 == 0:
                         self.app.root.after(0, lambda t=total:
                             self.dedup_status_var.set(f"已扫描 {t} 张..."))
-                    try:
-                        with open(path, "rb") as fp:
-                            md5 = hashlib.md5(fp.read()).hexdigest()
-                        if md5 in hashes:
-                            duplicates.append((hashes[md5], path))
+                    if mode == "similar":
+                        h = self._dhash(path)
+                        if h is None:
+                            continue
+                        if h in hashes:
+                            duplicates.append((hashes[h], path))
                         else:
-                            hashes[md5] = path
-                    except Exception:
-                        pass
+                            hashes[h] = path
+                    else:
+                        try:
+                            with open(path, "rb") as fp:
+                                md5 = hashlib.md5(fp.read()).hexdigest()
+                            if md5 in hashes:
+                                duplicates.append((hashes[md5], path))
+                            else:
+                                hashes[md5] = path
+                        except Exception:
+                            pass
+
+            # 相似模式：对哈希不同的图片两两比对（仅比对每组代表，避免 O(n²) 全量）
+            if mode == "similar":
+                unique_items = list(hashes.values())
+                keys = list(hashes.keys())
+                n = len(keys)
+                matched = set()
+                for i in range(n):
+                    if keys[i] in matched:
+                        continue
+                    for j in range(i + 1, n):
+                        if keys[j] in matched:
+                            continue
+                        diff = bin(keys[i] ^ keys[j]).count("1")
+                        if diff <= 10:
+                            duplicates.append((unique_items[i], unique_items[j]))
+                            matched.add(keys[j])
 
             self.app.root.after(0, lambda: self._show_dedup_results(duplicates, total, len(hashes)))
 
@@ -1007,9 +1109,11 @@ class ToolboxPage(ctk.CTkFrame):
         self.dedup_result.delete("1.0", "end")
 
         if not duplicates:
+            self.result_scroll.pack_forget()
             self.dedup_result.insert("end", f"✅ 未发现重复图片\n\n共扫描 {total} 张，{unique_count} 张唯一\n")
             self.dedup_status_var.set(f"完成：{total} 张中无重复")
         else:
+            self.result_scroll.pack(fill="both", expand=True, padx=24, pady=(0, 20))
             self.dedup_result.insert("end",
                 f"⚠️ 发现 {len(duplicates)} 组重复图片\n"
                 f"共扫描 {total} 张，{unique_count} 张唯一，{len(duplicates)} 张重复\n"
@@ -1492,8 +1596,8 @@ class ToolboxPage(ctk.CTkFrame):
         self.fc_run_btn.configure(command=self._fc_run)
 
         # 日志
-        self.fc_log = scrolledtext.ScrolledText(card, height=180, wrap="word",
-                                                font=("SF Mono", 11) if os.path != "Windows" else ("Consolas", 11),
+        self.fc_log = scrolledtext.ScrolledText(card, height=10, wrap="word",
+                                                font=("SF Mono", 11) if os.name != "nt" else ("Consolas", 11),
                                                 bg="#1e1b18", fg="#e2ddd5",
                                                 relief="flat", borderwidth=0)
         self.fc_log.pack(fill="both", expand=True, padx=24, pady=(0, 20))
@@ -1788,7 +1892,7 @@ class ToolboxPage(ctk.CTkFrame):
         self.df_run_btn.configure(command=self._df_run)
 
         # 日志
-        self.df_log = scrolledtext.ScrolledText(card, height=160, wrap="word",
+        self.df_log = scrolledtext.ScrolledText(card, height=10, wrap="word",
                                                 font=("SF Mono", 11) if os.name != "nt" else ("Consolas", 11),
                                                 bg="#1e1b18", fg="#e2ddd5",
                                                 relief="flat", borderwidth=0)
@@ -1919,3 +2023,263 @@ class ToolboxPage(ctk.CTkFrame):
     def _df_log(self, msg):
         self.df_log.insert("end", msg + "\n")
         self.df_log.see("end")
+
+    # ── 批量处理（尺寸/旋转/水印）──
+    def _build_batch_process(self):
+        card = ctk.CTkFrame(self.tool_body, **card_frame_style())
+        card.pack(fill="both", expand=True)
+
+        ctk.CTkLabel(card, text="批量处理（尺寸 · 旋转 · 水印）", font=font_safe(18, "bold"),
+                     text_color=COLORS["text"]).pack(anchor="w", padx=24, pady=(20, 8))
+        ctk.CTkLabel(card, text="批量调整尺寸、旋转、加文字水印，可组合使用。默认输出到 batch_output 子文件夹，不改动原文件。",
+                     font=font_safe(13, "normal"),
+                     text_color=COLORS["text_secondary"]).pack(anchor="w", padx=24, pady=(0, 16))
+
+        folder_row = ctk.CTkFrame(card, fg_color="transparent")
+        folder_row.pack(fill="x", padx=24, pady=(0, 12))
+        self.bp_folder_var = ctk.StringVar()
+        ctk.CTkEntry(folder_row, textvariable=self.bp_folder_var,
+                     font=font_safe(13), height=38,
+                     fg_color=COLORS["bg"], border_color=COLORS["border"],
+                     placeholder_text="选择图片文件夹...").pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(folder_row, text="📂 选择", width=80,
+                      command=self._bp_pick_folder,
+                      **secondary_button_style()).pack(side="left")
+
+        # 尺寸调整
+        size_row = ctk.CTkFrame(card, fg_color="transparent")
+        size_row.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(size_row, text="尺寸", font=font_safe(13, "bold"),
+                     text_color=COLORS["text"]).pack(side="left", padx=(0, 8))
+        self.bp_size_mode_var = ctk.StringVar(value="最长边(px)")
+        self.bp_size_value_var = ctk.StringVar(value="1600")
+        ctk.CTkEntry(size_row, textvariable=self.bp_size_value_var,
+                     width=90, height=34, font=font_safe(13)).pack(side="left", padx=(0, 4))
+        mode_menu = ctk.CTkOptionMenu(size_row, variable=self.bp_size_mode_var,
+                                      values=["最长边(px)", "百分比(%)"],
+                                      width=110, height=34, font=font_safe(12))
+        mode_menu.pack(side="left", padx=(0, 16))
+        ctk.CTkLabel(size_row, text="（填 0 或选「不调整」表示跳过）",
+                     font=font_safe(11), text_color=COLORS["text_secondary"]).pack(side="left")
+
+        # 旋转 + 水印开关
+        opt_row = ctk.CTkFrame(card, fg_color="transparent")
+        opt_row.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(opt_row, text="旋转", font=font_safe(13, "bold"),
+                     text_color=COLORS["text"]).pack(side="left", padx=(0, 8))
+        self.bp_rotate_var = ctk.StringVar(value="不旋转")
+        ctk.CTkOptionMenu(opt_row, variable=self.bp_rotate_var,
+                          values=["不旋转", "向左90°", "向右90°", "180°"],
+                          width=100, height=34, font=font_safe(12)).pack(side="left", padx=(0, 20))
+
+        self.bp_wm_enabled = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(opt_row, text="加文字水印", variable=self.bp_wm_enabled,
+                        font=font_safe(13), text_color=COLORS["text"],
+                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"]
+                        ).pack(side="left")
+
+        # 水印设置（勾选后生效）
+        wm_row = ctk.CTkFrame(card, fg_color="transparent")
+        wm_row.pack(fill="x", padx=24, pady=(0, 10))
+        self.bp_wm_text_var = ctk.StringVar(value="@ 我的素材库")
+        ctk.CTkEntry(wm_row, textvariable=self.bp_wm_text_var,
+                     font=font_safe(13), height=34, width=220,
+                     fg_color=COLORS["bg"], border_color=COLORS["border"],
+                     placeholder_text="水印文字...").pack(side="left", padx=(0, 12))
+        self.bp_wm_pos_var = ctk.StringVar(value="右下")
+        ctk.CTkOptionMenu(wm_row, variable=self.bp_wm_pos_var,
+                          values=["右下", "左下", "右上", "左上", "居中"],
+                          width=90, height=34, font=font_safe(12)).pack(side="left", padx=(0, 12))
+        ctk.CTkLabel(wm_row, text="透明度", font=font_safe(12),
+                     text_color=COLORS["text_secondary"]).pack(side="left", padx=(0, 4))
+        self.bp_wm_alpha_var = ctk.IntVar(value=60)
+        ctk.CTkSlider(wm_row, from_=10, to=100, variable=self.bp_wm_alpha_var,
+                      width=100, height=20, fg_color=COLORS["border"],
+                      progress_color=COLORS["primary"]).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(wm_row, textvariable=self.bp_wm_alpha_var,
+                     font=font_safe(12), text_color=COLORS["text_secondary"],
+                     width=28).pack(side="left")
+
+        # 输出选项
+        out_row = ctk.CTkFrame(card, fg_color="transparent")
+        out_row.pack(fill="x", padx=24, pady=(0, 12))
+        self.bp_keep_exif = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(out_row, text="保留 EXIF", variable=self.bp_keep_exif,
+                        font=font_safe(13), text_color=COLORS["text"],
+                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"]
+                        ).pack(side="left", padx=(0, 16))
+        self.bp_overwrite = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(out_row, text="覆盖原文件（危险，请先备份）", variable=self.bp_overwrite,
+                        font=font_safe(13), text_color=COLORS["warning"],
+                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"]
+                        ).pack(side="left")
+
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=24, pady=(0, 12))
+        self.bp_run_btn = ctk.CTkButton(btn_row, text="📐 开始处理", **primary_button_style())
+        self.bp_run_btn.pack(side="left")
+        self.bp_run_btn.configure(command=self._bp_run)
+
+        self.bp_log = scrolledtext.ScrolledText(card, height=10, wrap="word",
+                                                font=("SF Mono", 11) if os.name != "nt" else ("Consolas", 11),
+                                                bg="#1e1b18", fg="#e2ddd5",
+                                                relief="flat", borderwidth=0)
+        self.bp_log.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+
+    def _bp_pick_folder(self):
+        d = filedialog.askdirectory(title="选择图片文件夹")
+        if d:
+            self.bp_folder_var.set(d)
+
+    def _bp_log(self, msg):
+        self.after(0, self._bp_log_ui, msg)
+
+    def _bp_log_ui(self, msg):
+        self.bp_log.insert("end", msg + "\n")
+        self.bp_log.see("end")
+
+    @staticmethod
+    def _bp_watermark_font(size=36):
+        from PIL import ImageFont
+        candidates = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                try:
+                    return ImageFont.truetype(p, size)
+                except Exception:
+                    continue
+        return ImageFont.load_default()
+
+    def _bp_run(self):
+        folder = self.bp_folder_var.get().strip()
+        if not folder or not os.path.isdir(folder):
+            messagebox.showwarning("提示", "请先选择有效的图片文件夹")
+            return
+
+        size_mode = self.bp_size_mode_var.get()
+        try:
+            size_value = int(self.bp_size_value_var.get() or 0)
+        except ValueError:
+            messagebox.showwarning("提示", "尺寸数值必须是整数")
+            return
+
+        rotate_map = {"不旋转": 0, "向左90°": 90, "向右90°": -90, "180°": 180}
+        rotation = rotate_map.get(self.bp_rotate_var.get(), 0)
+        wm_on = self.bp_wm_enabled.get()
+        wm_text = self.bp_wm_text_var.get().strip()
+        if wm_on and not wm_text:
+            messagebox.showwarning("提示", "勾选了水印但水印文字为空")
+            return
+
+        overwrite = self.bp_overwrite.get()
+        keep_exif = self.bp_keep_exif.get()
+        wm_pos = self.bp_wm_pos_var.get()
+        wm_alpha = self.bp_wm_alpha_var.get()
+
+        self.bp_run_btn.configure(state="disabled", text="⏳ 处理中...")
+        self.bp_log.delete("1.0", "end")
+
+        def _run():
+            try:
+                from core.image_utils import _safe_open_image
+                files = []
+                for root, _, fnames in os.walk(folder):
+                    for fn in fnames:
+                        p = os.path.join(root, fn)
+                        if is_image_file(p):
+                            files.append(p)
+
+                self._bp_log(f"📸 找到 {len(files)} 张图片")
+
+                out_dir = folder if overwrite else os.path.join(folder, "batch_output")
+                if not overwrite and not os.path.isdir(out_dir):
+                    os.makedirs(out_dir, exist_ok=True)
+
+                ok = ng = skipped = 0
+                for i, path in enumerate(files, 1):
+                    name = os.path.basename(path)
+                    try:
+                        img, fmt = _safe_open_image(path)
+                        if img is None:
+                            raise ValueError("无法打开图片")
+
+                        # 旋转
+                        if rotation:
+                            img = img.rotate(rotation, expand=True)
+
+                        # 尺寸
+                        if size_value > 0:
+                            if "px" in size_mode:
+                                img.thumbnail((size_value, size_value), Image.LANCZOS)
+                            else:
+                                w = max(1, int(img.width * size_value / 100))
+                                h = max(1, int(img.height * size_value / 100))
+                                img = img.resize((w, h), Image.LANCZOS)
+
+                        # 水印
+                        if wm_on:
+                            img = self._bp_apply_watermark(img, wm_text, wm_pos, wm_alpha)
+
+                        ext = os.path.splitext(path)[1].lower()
+                        save_fmt = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG",
+                                    ".webp": "WebP"}.get(ext, "JPEG")
+                        if save_fmt == "JPEG" and img.mode in ("RGBA", "P"):
+                            img = img.convert("RGB")
+
+                        kwargs = {}
+                        if keep_exif:
+                            exif = img.info.get("exif", b"")
+                            if exif and save_fmt in ("JPEG", "WebP", "PNG"):
+                                kwargs["exif"] = exif
+
+                        out_path = path if overwrite else os.path.join(out_dir, name)
+                        img.save(out_path, save_fmt, **kwargs)
+                        ok += 1
+                    except Exception as e:
+                        ng += 1
+                        self._bp_log(f"   ❌ {name}: {e}")
+
+                    if i % 10 == 0 or i == len(files):
+                        self._bp_log(f"   {i}/{len(files)} 已处理")
+
+                self._bp_log("─" * 40)
+                self._bp_log(f"✅ 成功: {ok}  ❌ 失败: {ng}")
+                if not overwrite:
+                    self._bp_log(f"📁 输出目录: {out_dir}")
+            finally:
+                def _done():
+                    self.bp_run_btn.configure(state="normal", text="📐 开始处理")
+                self.after(0, _done)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _bp_apply_watermark(self, img, text, position, alpha):
+        """在图片上叠加半透明文字水印"""
+        from PIL import ImageDraw
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        font_size = max(18, img.width // 28)
+        font = self._bp_watermark_font(font_size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        margin = max(12, img.width // 50)
+        positions = {
+            "右下": (img.width - tw - margin, img.height - th - margin),
+            "左下": (margin, img.height - th - margin),
+            "右上": (img.width - tw - margin, margin),
+            "左上": (margin, margin),
+            "居中": ((img.width - tw) // 2, (img.height - th) // 2),
+        }
+        x, y = positions.get(position, positions["右下"])
+        fill = (255, 255, 255, int(255 * alpha / 100))
+        draw.text((x, y), text, font=font, fill=fill,
+                  stroke_width=1, stroke_fill=(0, 0, 0, int(120 * alpha / 100)))
+        return Image.alpha_composite(img, overlay)
