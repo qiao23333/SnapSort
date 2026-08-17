@@ -1,5 +1,9 @@
 # SnapSort — 本地 AI 素材整理工作台
 
+![Tests](https://github.com/YOUR_USERNAME/snapsort/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 > **Local-first AI photo organizer.** SnapSort turns messy photo dumps into a structured, searchable asset library — event grouping, ABC quality grading, batch renaming — all running offline on your own machine via Ollama. No cloud, no token cost, zero privacy leakage.
 
 完全本地运行的 AI 素材整理桌面软件：基于 Ollama 视觉模型，把「一堆杂乱照片」自动变成「按事件成组、按质量分级、按规则命名」的可用素材库。零云端、零 token 费用、隐私不出本机。

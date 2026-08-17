@@ -3,6 +3,8 @@
 """配置管理"""
 import os
 import json
+import shutil
+import time
 from pathlib import Path
 
 DEFAULT_CONFIG = {
@@ -83,12 +85,24 @@ class ConfigManager:
         else:
             self.config_path = Path(config_path)
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self._save_timer = None
         self.config = self.load()
 
     def load(self):
         if self.config_path.exists():
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                # 配置损坏：备份原文件后回退默认值，不让程序崩溃
+                try:
+                    shutil.copy2(self.config_path,
+                                 str(self.config_path) + f".corrupt.{int(time.time())}")
+                except Exception:
+                    pass
+                config = DEFAULT_CONFIG.copy()
+                self.save(config)
+                return config
             # 合并默认值，防止升级后缺字段
             for k, v in DEFAULT_CONFIG.items():
                 if k not in config:
@@ -124,5 +138,28 @@ class ConfigManager:
         return self.config.get(key, default)
 
     def set(self, key, value):
+        """写入配置。防抖：连续 set 只在 0.5s 后落盘一次，flush() 可强制立即保存。"""
         self.config[key] = value
+        self._schedule_save()
+
+    def _schedule_save(self):
+        # 取消上次未触发的保存，重新计时
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+        import threading
+        self._save_timer = threading.Timer(0.5, self._debounced_save)
+        self._save_timer.daemon = True
+        self._save_timer.start()
+
+    def _debounced_save(self):
+        try:
+            self.save()
+        except Exception:
+            pass
+
+    def flush(self):
+        """立即落盘（程序退出前调用，防止丢配置）"""
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+            self._save_timer = None
         self.save()

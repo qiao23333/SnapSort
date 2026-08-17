@@ -3,6 +3,18 @@
 本项目的所有重要变更都记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化。
 
+## [3.2.0] - 2026-08-16
+
+### 新增
+- 仪表盘重设计：问候头部 + Ollama 在线状态胶囊（点击重试）+ 上次整理摘要 + 近 7 日处理量趋势柱状图
+- 测试套件：26 个 pytest 用例覆盖配置/事件聚类/命名模板/断点/缓存/临时文件清理/历史记录
+- GitHub Actions CI：双系统（ubuntu/macos）× 双 Python（3.10/3.12）矩阵跑测试与语法检查
+- README 增加 Tests/Python/License 徽章；新增 requirements-dev.txt
+
+### 修复
+- 配置文件损坏时启动崩溃 → 自动备份损坏文件并回退默认值（测试发现的真 bug）
+- config.set 防抖 0.5s + 退出前 flush 强制落盘，连续设置不再每次写磁盘
+
 ## [3.1.0] - 2026-08-16
 
 ### 新增

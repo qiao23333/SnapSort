@@ -334,6 +334,15 @@ class SnapSortApp:
                       **secondary_button_style()).pack(anchor="w", pady=(8, 0))
 
 
+def _quit(root, app):
+    """退出前强制落盘配置（防抖中的未保存项）"""
+    try:
+        app.config_manager.flush()
+    except Exception:
+        pass
+    root.destroy()
+
+
 def main():
     from core.logger import get_logger
     log = get_logger()
@@ -341,6 +350,7 @@ def main():
     try:
         root = ctk.CTk()
         app = SnapSortApp(root)
+        root.protocol("WM_DELETE_WINDOW", lambda: _quit(root, app))
         root.mainloop()
         log.info("SnapSort 正常退出")
     except Exception as e:
