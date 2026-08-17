@@ -41,6 +41,7 @@ a = Analysis(
         'pillow_heif',
         'requests',
         'openpyxl',
+        'tkinterdnd2',
     ],
     hookspath=[],
     hooksconfig={},
@@ -64,7 +65,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,  # 无控制台窗口
-    icon=None,  # 可添加 icon='assets/icon.ico'
+    icon=os.path.join(project_root, 'data', 'snapsort_icon.icns'),
 )
 
 coll = COLLECT(
@@ -83,6 +84,6 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='SnapSort.app',
-        icon=None,
-        bundle_identifier='com.snapsort.app',
+        icon=os.path.join(project_root, 'data', 'snapsort_icon.icns'),
+    bundle_identifier='com.snapsort.app',
     )
