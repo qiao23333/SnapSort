@@ -2,11 +2,27 @@
 
 ## 一、迁移到新电脑
 
-### 方法 A：用迁移包（推荐）
+### 方法 A：用 .app / .exe 打包版（最省事，无需装 Python）
 
-1. 将 `SnapSort_v3.2.2_迁移包.zip` 拷贝到新电脑（U盘/AirDrop/云盘）
+**macOS：**
+1. 将 `SnapSort_macOS_v3.2.2.zip` 拷到新 Mac（U盘/AirDrop/云盘）
+2. 解压得到 `SnapSort.app`
+3. 双击 `SnapSort.app` 即可运行
+4. 首次打开可能提示"无法验证开发者"，右键→打开即可
+
+**Windows：**
+1. 需在 Windows 电脑上先运行 `packaging\build_windows.bat` 生成 exe
+2. 将生成的 `dist\SnapSort\` 整个文件夹打包为 zip
+3. 拷到目标电脑，解压后双击 `SnapSort.exe` 即可
+
+> .app/.exe 内置完整 Python 运行时，不需要额外安装 Python。
+> 但 AI 分类功能仍需安装 Ollama（应用内有向导引导下载）。
+
+### 方法 B：用源码迁移包（需要装 Python）
+
+1. 将 `SnapSort_v3.2.2_迁移包.zip` 拷贝到新电脑
 2. 解压到任意目录
-3. 双击 `启动SnapSort.command`（macOS）或运行 `bash run.sh`
+3. 双击 `启动SnapSort.command`（macOS）或运行 `run.bat`（Windows）
 
 启动脚本会自动：
 - 查找带 Tk 8.6+ 的 Python（没有会提示安装）
@@ -14,7 +30,7 @@
 - 安装拖拽支持（tkinterdnd2，可选）
 - 启动应用
 
-### 方法 B：从 GitHub 克隆
+### 方法 C：从 GitHub 克隆
 
 ```bash
 git clone https://github.com/你的用户名/SnapSort.git
