@@ -50,12 +50,12 @@ class DashboardPage(ctk.CTkFrame):
         ctk.CTkLabel(left, text=date_str, font=font_safe(13, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w", pady=(2, 0))
 
-        # AI 状态胶囊（点击重试检测）
+        # AI 状态胶囊（在线→管理模型，离线→弹出安装向导）
         self.ai_pill = ctk.CTkButton(
-            header, text="● AI 检测中…", width=130, height=32, corner_radius=16,
+            header, text="● AI 检测中…", width=150, height=32, corner_radius=16,
             fg_color=COLORS["border"], hover_color=COLORS["hover"],
             text_color=COLORS["text"], font=font_safe(12, "bold"),
-            command=self.check_ai_status)
+            command=self._on_ai_pill_click)
         self.ai_pill.pack(side="right", pady=(8, 0))
 
         # ── 主行动卡：左侧开始整理 + 路径，右侧近7日趋势图 ──
@@ -138,12 +138,21 @@ class DashboardPage(ctk.CTkFrame):
             ok = check_ollama()
             def _apply():
                 if ok:
-                    self._set_pill("● AI 在线", COLORS["success"], "#ffffff")
+                    self._set_pill("● AI 在线 · 点击管理", COLORS["success"], "#ffffff")
                 else:
-                    self._set_pill("● AI 离线 · 点击重试", COLORS["danger"], "#ffffff")
+                    self._set_pill("● AI 离线 · 点击安装", COLORS["danger"], "#ffffff")
             safe_after(self, _apply)
 
         threading.Thread(target=_check, daemon=True).start()
+
+    def _on_ai_pill_click(self):
+        """点击 AI 状态胶囊：在线则管理模型，离线则弹出安装向导"""
+        from core.sorter_engine import check_ollama
+        if check_ollama():
+            self.check_ai_status()
+        else:
+            from ui.ollama_wizard import OllamaWizard
+            OllamaWizard(self.app.root, self.app, on_success=self.check_ai_status)
 
     def _set_pill(self, text, bg, fg):
         try:
