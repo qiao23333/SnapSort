@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 运行时数据与缓存
+data/
+*.log
+.snapsort_checkpoint.json
+
+# 备份与打包产物
+.backup_v2/
+dist/
+build/
+*.zip
+*.spec.bak
+
+# 系统文件
+.DS_Store
+Thumbs.db
