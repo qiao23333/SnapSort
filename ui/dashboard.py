@@ -72,13 +72,12 @@ class DashboardPage(ctk.CTkFrame):
 
         btns = ctk.CTkFrame(hero_left, fg_color="transparent")
         btns.pack(anchor="w")
-        ctk.CTkButton(btns, text="🚀 开始整理素材", height=40, corner_radius=10,
+        ctk.CTkButton(btns, text="🚀 开始整理素材",
                       command=lambda: self.app.show_page("auto_sort"),
                       **primary_button_style()).pack(side="left", padx=(0, 10))
         ctk.CTkButton(btns, text="🗂 选素材文件夹", command=self._choose_input,
-                      height=40, corner_radius=10,
                       **secondary_button_style()).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btns, text="📂 打开输出", height=40, corner_radius=10,
+        ctk.CTkButton(btns, text="📂 打开输出",
                       command=self.app.open_output_folder,
                       **secondary_button_style()).pack(side="left")
 
