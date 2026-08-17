@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """AI 工具箱：位图转矢量、以文搜图、图片描述、图片问答、智能助手、重复检测"""
 import os
+import re
 import hashlib
 import threading
 import customtkinter as ctk
@@ -1359,7 +1360,7 @@ class ToolboxPage(ctk.CTkFrame):
         name = name.replace("{date}", date_str)
         name = name.replace("{parent}", parent)
         # 支持 {seq} {seq:02d} {seq:03d} 等
-        name = __import__("re").sub(
+        name = re.sub(
             r'\{seq(?::(\d+)d)?\}',
             lambda m: str(seq).zfill(int(m.group(1)) if m.group(1) else 0),
             name
@@ -1370,7 +1371,7 @@ class ToolboxPage(ctk.CTkFrame):
             name += ext
 
         # 清理非法字符
-        name = __import__("re").sub(r'[\\/:*?"<>|]', '', name)
+        name = re.sub(r'[\\/:*?"<>|]', '', name)
         return name
 
     def _preview_rename(self):
@@ -1514,11 +1515,8 @@ class ToolboxPage(ctk.CTkFrame):
 
     def _safe_after(self, callback):
         """安全地在主线程执行回调（窗口已关闭则不执行）"""
-        try:
-            if self.winfo_exists():
-                self.after(0, callback)
-        except Exception:
-            pass
+        from ui.widgets import safe_after
+        safe_after(self, callback)
 
     def _on_models_loaded(self, models):
         self.toolbox_model_combo.configure(values=models)
@@ -1645,8 +1643,9 @@ class ToolboxPage(ctk.CTkFrame):
             new_ext = ext_map.get(fmt, ".jpg")
 
             for i, path in enumerate(files):
+                opened = None
                 try:
-                    img, _ = _safe_open_image(path)
+                    img, opened = _safe_open_image(path)
                     if img is None:
                         raise ValueError("无法打开图片")
 
@@ -1681,6 +1680,9 @@ class ToolboxPage(ctk.CTkFrame):
                 except Exception as e:
                     ng += 1
                     self._fc_log(f"   ❌ {os.path.basename(path)}: {e}")
+                finally:
+                    from core.image_utils import _cleanup_temp
+                    _cleanup_temp(opened, path)
 
             self._fc_log("─" * 40)
             self._fc_log(f"✅ 成功: {ok}  ❌ 失败: {ng}")
@@ -1746,11 +1748,12 @@ class ToolboxPage(ctk.CTkFrame):
             from PIL.ExifTags import TAGS
             import hashlib as _hashlib
 
-            img, fmt = _safe_open_image(path)
+            img, opened = _safe_open_image(path)
             if img is None:
                 self._exif_log("❌ 无法打开图片")
                 return
 
+            fmt = os.path.splitext(opened)[1].lstrip(".").upper() or "未知"
             self._exif_log(f"🖼 格式: {fmt}")
             self._exif_log(f"📐 尺寸: {img.width} x {img.height} 像素")
             self._exif_log(f"🎨 色彩模式: {img.mode}")
@@ -1958,8 +1961,9 @@ class ToolboxPage(ctk.CTkFrame):
                 else:
                     # 检查是否有 EXIF 日期
                     has_date = False
+                    opened = None
                     try:
-                        img, _ = _safe_open_image(p)
+                        img, opened = _safe_open_image(p)
                         if img:
                             exif = img.getexif()
                             if exif:
@@ -1969,6 +1973,9 @@ class ToolboxPage(ctk.CTkFrame):
                                         break
                     except Exception:
                         pass
+                    finally:
+                        from core.image_utils import _cleanup_temp
+                        _cleanup_temp(opened, p)
                     if not has_date:
                         to_fix.append(p)
                     else:

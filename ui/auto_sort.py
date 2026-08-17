@@ -1018,11 +1018,8 @@ class AutoSortPage(ctk.CTkFrame):
 
     def _safe_after(self, callback):
         """安全地在主线程执行回调（窗口已关闭则不执行）"""
-        try:
-            if self.winfo_exists():
-                self.after(0, callback)
-        except Exception:
-            pass
+        from ui.widgets import safe_after
+        safe_after(self, callback)
 
     def _on_models(self, models):
         self.model_combo.configure(values=models)

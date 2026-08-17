@@ -175,11 +175,8 @@ class GalleryPage(ctk.CTkFrame):
 
     def _safe_after(self, callback):
         """安全地在主线程执行回调（窗口已关闭则不执行）"""
-        try:
-            if self.winfo_exists():
-                self.after(0, callback)
-        except Exception:
-            pass
+        from ui.widgets import safe_after
+        safe_after(self, callback)
 
     def _start_render(self, images):
         if not images:
@@ -285,10 +282,13 @@ class GalleryPage(ctk.CTkFrame):
         self._preview_window.transient(self)
 
         try:
-            from core.image_utils import _safe_open_image
-            img, _ = _safe_open_image(path)
-            img.thumbnail((860, 620), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
+            from core.image_utils import _safe_open_image, _cleanup_temp
+            img, opened = _safe_open_image(path)
+            try:
+                img.thumbnail((860, 620), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+            finally:
+                _cleanup_temp(opened, path)
             self.thumbnails.append(photo)
             ctk.CTkLabel(self._preview_window, image=photo, text="").pack(pady=20)
         except Exception as e:

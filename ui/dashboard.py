@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 """仪表盘页面"""
 import os
+import threading
 import customtkinter as ctk
 from tkinter import filedialog
 
 from ui.theme import COLORS, font_safe, primary_button_style, secondary_button_style, card_frame_style
-from ui.widgets import StatCard
+from ui.widgets import StatCard, safe_after
 from core.image_utils import image_count_and_size, format_size
 
 
@@ -98,21 +99,33 @@ class DashboardPage(ctk.CTkFrame):
         self.stat_total.update_value(value=str(total_images))
         self.stat_tasks.update_value(value=str(total_tasks))
 
-        # 输入/输出统计
+        # 输入/输出统计（目录可能很大，放后台线程统计，避免卡死界面）
         input_dir = self.app.input_var.get()
         output_dir = self.app.output_var.get()
+        self.stat_input.update_value(value="…", subtitle="统计中")
+        self.stat_output.update_value(value="…", subtitle="统计中")
 
-        if os.path.isdir(input_dir):
-            count, size = image_count_and_size(input_dir)
-            self.stat_input.update_value(value=str(count), subtitle=f"{format_size(size)}")
-        else:
-            self.stat_input.update_value(value="0", subtitle="路径不存在")
+        def _scan_dirs():
+            if os.path.isdir(input_dir):
+                in_count, in_size = image_count_and_size(input_dir)
+            else:
+                in_count, in_size = None, None
+            if os.path.isdir(output_dir):
+                out_count, out_size = image_count_and_size(output_dir)
+            else:
+                out_count, out_size = None, None
 
-        if os.path.isdir(output_dir):
-            count, size = image_count_and_size(output_dir)
-            self.stat_output.update_value(value=str(count), subtitle=f"{format_size(size)}")
-        else:
-            self.stat_output.update_value(value="0", subtitle="尚未生成")
+            def _apply():
+                self.stat_input.update_value(
+                    value=str(in_count) if in_count is not None else "0",
+                    subtitle=format_size(in_size) if in_size is not None else "路径不存在")
+                self.stat_output.update_value(
+                    value=str(out_count) if out_count is not None else "0",
+                    subtitle=format_size(out_size) if out_size is not None else "尚未生成")
+
+            safe_after(self, _apply)
+
+        threading.Thread(target=_scan_dirs, daemon=True).start()
 
         # 刷新最近任务
         for widget in self.recent_list.winfo_children():

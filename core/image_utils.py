@@ -88,7 +88,10 @@ def convert_heic_to_jpeg(image_path):
 
 
 def _safe_open_image(image_path):
-    """安全打开图片，处理 HEIC/HEIF 格式，返回 PIL Image 对象"""
+    """安全打开图片，处理 HEIC/HEIF 格式，返回 (PIL Image, 实际打开的路径)。
+
+    返回的路径为临时文件时（HEIC 经 sips 转换），调用方用完后须自行清理。
+    """
     jpeg_path = convert_heic_to_jpeg(image_path)
     img = Image.open(jpeg_path)
     # 确保 RGBA 图片在白底上合成
@@ -100,13 +103,21 @@ def _safe_open_image(image_path):
         img = img.convert("RGB")
     elif img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
-    return img, (jpeg_path != image_path)
+    return img, jpeg_path
+
+
+def _cleanup_temp(opened_path, original_path):
+    """清理 HEIC 转换产生的临时文件（opened_path 为原路径时无操作）"""
+    if opened_path and opened_path != original_path:
+        try:
+            os.unlink(opened_path)
+        except OSError:
+            pass
 
 
 def encode_image(image_path, max_size_kb=1024):
     """将图片转为 base64，HEIC/HEIF 会先转成 JPEG，并限制尺寸"""
-    img, need_cleanup = _safe_open_image(image_path)
-    jpeg_path = image_path  # for finally cleanup
+    img, opened_path = _safe_open_image(image_path)
     try:
         # 限制长边
         max_side = 1600
@@ -130,23 +141,20 @@ def encode_image(image_path, max_size_kb=1024):
 
         return base64.b64encode(data).decode("utf-8")
     finally:
-        # 清理临时文件
-        if need_cleanup:
-            try:
-                # jpeg_path 已经在 _safe_open_image 里处理了
-                pass
-            except Exception:
-                pass
+        _cleanup_temp(opened_path, image_path)
 
 
 def make_thumbnail(image_path, size=(120, 120), quality=85):
     """生成缩略图，返回 PIL Image 对象"""
+    opened = None
     try:
-        img, _ = _safe_open_image(image_path)
+        img, opened = _safe_open_image(image_path)
         img.thumbnail(size, Image.LANCZOS)
         return img
     except Exception:
         return None
+    finally:
+        _cleanup_temp(opened, image_path)
 
 
 def image_count_and_size(directory):
@@ -675,6 +683,7 @@ def bitmap_to_vector_svg(image_path, mode="photo", max_colors=8, max_size=500):
         SVG 字符串，或 None 表示失败
     """
     # ── VTracer 优先路径 ──
+    opened_path = None
     try:
         import vtracer
         import tempfile
@@ -691,7 +700,7 @@ def bitmap_to_vector_svg(image_path, mode="photo", max_colors=8, max_size=500):
             vmode = "spline"
 
         # 预处理：缩小到目标尺寸
-        img, need_cleanup = _safe_open_image(image_path)
+        img, opened_path = _safe_open_image(image_path)
         if img is None:
             raise ValueError("无法打开图片")
 
@@ -733,22 +742,20 @@ def bitmap_to_vector_svg(image_path, mode="photo", max_colors=8, max_size=500):
         os.unlink(tmp_in.name)
         os.unlink(tmp_out.name)
 
-        if need_cleanup:
-            try:
-                os.unlink(image_path)
-            except Exception:
-                pass
-
         return svg
 
     except ImportError:
         pass  # VTracer 未安装，回退到内置算法
     except Exception:
         pass  # VTracer 失败，回退到内置算法
+    finally:
+        # 清理 HEIC 转换产生的临时文件（注意：绝不能动原文件）
+        _cleanup_temp(opened_path, image_path)
 
     # ── 回退路径：内置 Moore 轮廓追踪 ──
+    fallback_path = None
     try:
-        img, need_cleanup = _safe_open_image(image_path)
+        img, fallback_path = _safe_open_image(image_path)
     except Exception as e:
         raise e
     
@@ -768,6 +775,8 @@ def bitmap_to_vector_svg(image_path, mode="photo", max_colors=8, max_size=500):
             return _vectorize_photo_mode(img, max_colors, max_size)
     except Exception:
         return None
+    finally:
+        _cleanup_temp(fallback_path, image_path)
 
 
 def _potrace_svg(img, potrace_cmd):

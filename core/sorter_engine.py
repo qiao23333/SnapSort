@@ -136,8 +136,18 @@ def ensure_model(model_name, url=DEFAULT_URL, log_callback=None):
         return False, str(e)
 
 
+_KW_CACHE = {"key": None, "map": None}
+
+
 def build_keywords_map(categories):
-    """根据分类配置生成关键词映射（硬编码 + 配置描述）"""
+    """根据分类配置生成关键词映射（硬编码 + 配置描述）。
+
+    结果按分类内容缓存：分类配置不变时直接复用，避免每张图片重复构建。
+    """
+    cache_key = tuple(sorted((str(k), str(v)) for k, v in categories.items()))
+    if _KW_CACHE["key"] == cache_key and _KW_CACHE["map"] is not None:
+        return _KW_CACHE["map"]
+
     # 基础关键词，可覆盖
     base_keywords = {
         "工厂图": ["工厂", "厂房", "仓库", "生产线", "机械", "设备", "工业", "车间", "制造",
@@ -160,7 +170,35 @@ def build_keywords_map(categories):
             kws.extend([d.strip() for d in desc.split("。") if d.strip()])
             kws.extend([d.strip() for d in desc.split("、") if d.strip()])
         keywords_map[cat] = list(dict.fromkeys(kws))  # 去重
+
+    _KW_CACHE["key"] = cache_key
+    _KW_CACHE["map"] = keywords_map
     return keywords_map
+
+
+# 参考照片 base64 缓存：path -> ((mtime_ns, size), b64)
+_REF_B64_CACHE = {}
+
+
+def encode_image_cached(path):
+    """带失效检测的编码缓存：参考照片在同一批任务中被反复使用，避免每张目标图重复编码。
+
+    文件 mtime/size 变化或缓存超限时自动重新编码。
+    """
+    try:
+        st = os.stat(path)
+        sig = (st.st_mtime_ns, st.st_size)
+        hit = _REF_B64_CACHE.get(path)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+    except OSError:
+        return encode_image(path)
+
+    b64 = encode_image(path)
+    if len(_REF_B64_CACHE) >= 256:
+        _REF_B64_CACHE.clear()
+    _REF_B64_CACHE[path] = (sig, b64)
+    return b64
 
 
 def match_category(desc, keywords_map):
@@ -231,11 +269,11 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     images = [target_b64]           # 第 1 张 = 待分类照片
     img_labels = ["第1张：待分类照片"]
 
-    # 添加人物参考照片
+    # 添加人物参考照片（编码结果缓存，同批任务不重复编码）
     for name, refs in person_refs:
         for rp in refs:
             try:
-                rb64 = encode_image(rp)
+                rb64 = encode_image_cached(rp)
                 images.append(rb64)
                 idx = len(images)
                 img_labels.append(f"第{idx}张：人物「{name}」的参考照片")
@@ -246,7 +284,7 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     for name, refs in place_refs:
         for rp in refs:
             try:
-                rb64 = encode_image(rp)
+                rb64 = encode_image_cached(rp)
                 images.append(rb64)
                 idx = len(images)
                 img_labels.append(f"第{idx}张：地点「{name}」的参考照片")

@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
-from .image_utils import is_image_file, encode_image, _safe_open_image
+from .image_utils import is_image_file, encode_image, _safe_open_image, _cleanup_temp
 
 OLLAMA = "http://localhost:11434"
 
@@ -81,8 +81,9 @@ def scan_photos(directory):
 
 def get_datetime(image_path):
     """从 EXIF 或文件修改时间获取完整 datetime 对象。"""
+    opened = None
     try:
-        img, _ = _safe_open_image(image_path)
+        img, opened = _safe_open_image(image_path)
         exif = img.getexif()
         if exif:
             for tag in (36867, 36868, 306):
@@ -94,6 +95,8 @@ def get_datetime(image_path):
                         pass
     except Exception:
         pass
+    finally:
+        _cleanup_temp(opened, image_path)
     try:
         return datetime.fromtimestamp(os.path.getmtime(image_path))
     except Exception:
@@ -111,13 +114,16 @@ def get_date(image_path):
 def is_screenshot(image_path):
     """检测是否为截图/转发图片（无 EXIF + 文件名特征）。"""
     # 1. 有 EXIF 的大概率是真实照片
+    opened = None
     try:
-        img, _ = _safe_open_image(image_path)
+        img, opened = _safe_open_image(image_path)
         exif = img.getexif()
         if exif and len(exif) > 2:
             return False
     except Exception:
         pass
+    finally:
+        _cleanup_temp(opened, image_path)
 
     # 2. 无 EXIF，检查文件名特征
     name = os.path.basename(image_path).upper()
@@ -591,7 +597,12 @@ class EventPipeline:
                 for future in as_completed(futures):
                     if self._stop:
                         break
-                    idx, r = future.result()
+                    try:
+                        idx, r = future.result()
+                    except Exception as e:
+                        # 单张失败不拖垮整批：记录并继续
+                        log(f"   ⚠️ 单张处理失败: {e}")
+                        continue
                     results[idx] = (paths[idx], r)
                     g = r.get("grade", "C")
                     counts[g] = counts.get(g, 0) + 1
