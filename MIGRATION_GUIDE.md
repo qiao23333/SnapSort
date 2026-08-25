@@ -54,7 +54,7 @@ bash run.sh
 
 1. 打开 https://github.com/new
 2. Repository name: `SnapSort`
-3. 选 Private 或 Public（作品集建议 Public）
+3. 根据是否希望公开源码选择 Private 或 Public
 4. **不要**勾选 "Add a README"（项目已有）
 5. 点 Create repository
 

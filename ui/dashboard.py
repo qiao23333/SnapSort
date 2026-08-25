@@ -10,7 +10,7 @@ import customtkinter as ctk
 
 from core.image_utils import format_size, image_count_and_size
 from core.paths import desktop_dir
-from core.portfolio import export_portfolio_snapshot
+from core.usage_report import export_usage_report
 from ui.theme import (
     COLORS,
     card_frame_style,
@@ -132,7 +132,7 @@ class DashboardPage(ctk.CTkFrame):
                       text_color=COLORS["primary"], font=font_safe(12, "normal"),
                       width=70, height=28).pack(side="right")
         ctk.CTkButton(
-            header2, text="导出项目证据", command=self._export_portfolio,
+            header2, text="导出使用报告", command=self._export_usage_report,
             fg_color="transparent", hover_color=COLORS["hover"],
             text_color=COLORS["primary"], font=font_safe(12, "normal"),
             width=100, height=28,
@@ -186,21 +186,21 @@ class DashboardPage(ctk.CTkFrame):
             self.app.config_manager.set("last_input", path)
             self.refresh_stats()
 
-    def _export_portfolio(self):
+    def _export_usage_report(self):
         from core.history import HistoryManager
 
         path = filedialog.asksaveasfilename(
-            title="导出 SnapSort 项目证据",
+            title="导出 SnapSort 使用报告",
             initialdir=str(desktop_dir()),
-            initialfile="SnapSort_项目证据.md",
+            initialfile="SnapSort_使用报告.md",
             defaultextension=".md",
             filetypes=[("Markdown", "*.md"), ("所有文件", "*.*")],
         )
         if not path:
             return
         try:
-            export_portfolio_snapshot(HistoryManager().get_all(), path)
-            messagebox.showinfo("导出完成", "已生成隐私安全的项目证据快照。")
+            export_usage_report(HistoryManager().get_all(), path)
+            messagebox.showinfo("导出完成", "使用报告已生成，不包含图片名和本地路径。")
         except OSError as exc:
             messagebox.showerror("导出失败", str(exc))
 
