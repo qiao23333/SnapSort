@@ -4,7 +4,28 @@
 import os
 import re
 import shutil
-from pathlib import Path
+
+
+def _safe_subdir(value):
+    """返回安全的相对目录，拒绝绝对路径和上级目录跳转。"""
+    value = str(value or "").strip().replace("\\", "/")
+    parts = [part for part in value.split("/") if part not in ("", ".")]
+    if not parts or os.path.isabs(value) or any(part == ".." for part in parts):
+        return None
+    cleaned = [re.sub(r'[<>:"|?*]', "_", part).rstrip(" .") for part in parts]
+    if any(not part for part in cleaned):
+        return None
+    return os.path.join(*cleaned)
+
+
+def _deduplicate_path(path):
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    i = 1
+    while os.path.exists(f"{base}_{i:03d}{ext}"):
+        i += 1
+    return f"{base}_{i:03d}{ext}"
 
 
 class RuleCondition:
@@ -100,6 +121,9 @@ class RuleAction:
 
         # 支持变量替换: {category} -> 分类目录名
         target_subdir = target_subdir.replace("{category}", os.path.basename(os.path.dirname(file_path)))
+        target_subdir = _safe_subdir(target_subdir)
+        if not target_subdir:
+            return False, "目标目录不安全或无效", None
 
         dest_dir = os.path.join(output_base, target_subdir)
         os.makedirs(dest_dir, exist_ok=True)
@@ -108,12 +132,7 @@ class RuleAction:
         dest_path = os.path.join(dest_dir, fname)
 
         # 处理重名
-        if os.path.exists(dest_path):
-            base, ext = os.path.splitext(dest_path)
-            i = 1
-            while os.path.exists(f"{base}_{i:03d}{ext}"):
-                i += 1
-            dest_path = f"{base}_{i:03d}{ext}"
+        dest_path = _deduplicate_path(dest_path)
 
         try:
             shutil.move(file_path, dest_path)
@@ -130,6 +149,9 @@ class RuleAction:
         new_name = pattern.replace("{name}", base).replace("{ext}", ext)
         if not new_name.endswith(ext):
             new_name += ext
+        new_name = re.sub(r'[\\/:*?"<>|]', "_", new_name).rstrip(" .")
+        if not new_name or new_name in (".", ".."):
+            return False, "重命名模板生成了无效文件名", None
 
         new_path = os.path.join(os.path.dirname(file_path), new_name)
         if os.path.exists(new_path):
@@ -147,11 +169,15 @@ class RuleAction:
         if not target_subdir:
             return False, "未指定目标目录", None
 
+        target_subdir = _safe_subdir(target_subdir)
+        if not target_subdir:
+            return False, "目标目录不安全或无效", None
         dest_dir = os.path.join(output_base, target_subdir)
         os.makedirs(dest_dir, exist_ok=True)
 
         fname = os.path.basename(file_path)
         dest_path = os.path.join(dest_dir, fname)
+        dest_path = _deduplicate_path(dest_path)
 
         try:
             shutil.copy2(file_path, dest_path)
@@ -235,7 +261,6 @@ class RuleEngine:
         返回: 统计信息
         """
         total_rules = 0
-        total_matches = 0
         total_actions = 0
 
         enabled_rules = [r for r in self.rules if r.get("enabled", True)]
@@ -285,9 +310,9 @@ PRESET_RULES = [
         "action": {"type": "move", "target_dir": "截图"}
     },
     {
-        "name": "大尺寸图片另存",
+        "name": "工作图片另存",
         "enabled": False,
-        "condition": {"category": "澳洲风景图"},
-        "action": {"type": "copy", "target_dir": "精选澳洲风景"}
+        "condition": {"category": "工作"},
+        "action": {"type": "copy", "target_dir": "工作精选"}
     }
 ]

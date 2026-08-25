@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """图片工具：HEIC 转换、base64 编码、缩略图生成、位图转矢量"""
-import os
-import io
 import base64
+import io
+import os
 import subprocess
 import tempfile
-from pathlib import Path
 from collections import defaultdict
-import math
 
-from PIL import Image, ImageFilter, ImageDraw
+from PIL import Image, ImageFilter
 
 # ── HEIC/HEIF 支持 ──
 # 在模块加载时注册 HEIF opener，使 PIL.Image.open 能直接读 HEIC
@@ -74,8 +72,8 @@ def convert_heic_to_jpeg(image_path):
         except Exception:
             pass
         raise ValueError(
-            f"HEIC 转换失败：找不到 sips 命令（仅 macOS 可用）。\n"
-            f"请安装 pillow-heif: pip install pillow-heif"
+            "HEIC 转换失败：找不到 sips 命令（仅 macOS 可用）。\n"
+            "请安装 pillow-heif: pip install pillow-heif"
         )
     except Exception as e:
         try:
@@ -93,16 +91,15 @@ def _safe_open_image(image_path):
     返回的路径为临时文件时（HEIC 经 sips 转换），调用方用完后须自行清理。
     """
     jpeg_path = convert_heic_to_jpeg(image_path)
-    img = Image.open(jpeg_path)
-    # 确保 RGBA 图片在白底上合成
-    if img.mode == "RGBA":
-        bg = Image.new("RGB", img.size, (255, 255, 255))
-        bg.paste(img, mask=img.split()[3])
-        img = bg
-    elif img.mode == "P":
-        img = img.convert("RGB")
-    elif img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
+    with Image.open(jpeg_path) as source:
+        source.load()
+        if source.mode == "RGBA":
+            img = Image.new("RGB", source.size, (255, 255, 255))
+            img.paste(source, mask=source.getchannel("A"))
+        elif source.mode not in ("RGB", "L"):
+            img = source.convert("RGB")
+        else:
+            img = source.copy()
     return img, jpeg_path
 
 
@@ -427,10 +424,6 @@ def _kmeans_quantize(img, n_colors):
         colors=n_colors, method=Image.Quantize.MEDIANCUT
     )
     
-    # 获取调色板和量化后的像素
-    palette = quantized.getpalette()[:n_colors * 3]
-    pixels = list(quantized.getdata())
-    
     # 转为 RGB
     rgb_img = quantized.convert("RGB")
     
@@ -685,8 +678,9 @@ def bitmap_to_vector_svg(image_path, mode="photo", max_colors=8, max_size=500):
     # ── VTracer 优先路径 ──
     opened_path = None
     try:
-        import vtracer
         import tempfile
+
+        import vtracer
 
         # 模式映射
         if mode == "silhouette":

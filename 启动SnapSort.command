@@ -1,5 +1,5 @@
 #!/bin/bash
-# SnapSort 3.0 Mac 启动器（双击运行）
+# SnapSort 3.4.0 Mac 启动器（双击运行）
 # 自动定位项目目录、设置 Tcl/Tk 环境、启动应用
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
@@ -11,7 +11,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
-# 优先使用 WorkBuddy 管理 Python，其次系统 python3
+# 优先使用带 tkinter 的 python3，其次 python
 PYTHON=""
 for p in "python3" "python"; do
     if command -v "$p" &>/dev/null; then
@@ -42,14 +42,18 @@ fi
 
 # 确保依赖已安装
 echo "检查依赖..."
-$PYTHON -c "import customtkinter, requests, PIL, pillow_heif" 2>/dev/null
+$PYTHON -c "import customtkinter, requests, PIL, pillow_heif, openpyxl, tkinterdnd2" 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "正在安装依赖..."
-    $PYTHON -m pip install "customtkinter>=5.2.2,<6.0.0" requests Pillow pillow-heif openpyxl
+    $PYTHON -m pip install -r requirements.txt
+    if [ $? -ne 0 ]; then
+        osascript -e 'display dialog "依赖安装失败，请检查网络后重试。" buttons {"确定"} default button "确定" with icon stop'
+        exit 1
+    fi
 fi
 
 # 启动应用
-echo "启动 SnapSort 3.0..."
+echo "启动 SnapSort 3.4.0..."
 $PYTHON app.py
 EXIT_CODE=$?
 

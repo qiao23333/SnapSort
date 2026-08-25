@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """AI 工具箱：位图转矢量、以文搜图、图片描述、图片问答、智能助手、重复检测"""
+import hashlib
 import os
 import re
-import hashlib
 import threading
-import customtkinter as ctk
-from tkinter import filedialog, messagebox, scrolledtext
 from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext
 
+import customtkinter as ctk
 import requests
 from PIL import Image
+from send2trash import send2trash
 
+from core.image_utils import bitmap_to_vector_svg, encode_image, is_image_file
+from core.model_info import get_model_hint, get_model_role_tag, is_vision_model
+from core.paths import desktop_dir
+from core.sorter_engine import DEFAULT_URL, fetch_all_models
 from ui.theme import (
-    COLORS, font_safe, primary_button_style,
-    secondary_button_style, card_frame_style
+    COLORS,
+    card_frame_style,
+    font_mono,
+    font_safe,
+    primary_button_style,
+    secondary_button_style,
 )
-from core.sorter_engine import fetch_all_models, DEFAULT_URL
-from core.image_utils import is_image_file, encode_image, bitmap_to_vector_svg
-from core.model_info import get_model_hint, is_vision_model, get_model_role_tag
 
 
 class ToolboxPage(ctk.CTkFrame):
@@ -49,11 +55,11 @@ class ToolboxPage(ctk.CTkFrame):
 
         # 常用工具（第一行，始终显示）
         common_tools = [
-            ("🔍 以文搜图", "search_by_text"),
-            ("📝 图片描述", "describe_image"),
-            ("🔄 格式转换", "format_convert"),
-            ("📅 日期修正", "date_fix"),
-            ("🔁 重复检测", "dedup"),
+            ("以文搜图", "search_by_text"),
+            ("图片描述", "describe_image"),
+            ("格式转换", "format_convert"),
+            ("日期修正", "date_fix"),
+            ("重复检测", "dedup"),
         ]
         for label, val in common_tools:
             btn = ctk.CTkButton(seg_container, text=label,
@@ -72,12 +78,12 @@ class ToolboxPage(ctk.CTkFrame):
         self.more_tools_visible = False
 
         more_tools = [
-            ("🎨 位图转矢量", "vectorize"),
-            ("💬 图片问答", "visual_qa"),
-            ("🤖 智能助手", "smart_assistant"),
-            ("📐 批量处理", "batch_process"),
-            ("🏷 自定义重命名", "custom_rename"),
-            ("📋 EXIF 查看", "exif_view"),
+            ("位图转矢量", "vectorize"),
+            ("图片问答", "visual_qa"),
+            ("智能助手", "smart_assistant"),
+            ("批量处理", "batch_process"),
+            ("自定义重命名", "custom_rename"),
+            ("EXIF 信息", "exif_view"),
         ]
         for label, val in more_tools:
             btn = ctk.CTkButton(self.more_tools_frame, text=label,
@@ -117,7 +123,7 @@ class ToolboxPage(ctk.CTkFrame):
                                                      dropdown_font=font_safe(13, "normal"),
                                                      command=self._on_model_change)
         self.toolbox_model_combo.pack(side="left")
-        ctk.CTkButton(model_row, text="🔄", command=self._refresh_models, width=36, height=34,
+        ctk.CTkButton(model_row, text="刷新", command=self._refresh_models, width=56, height=34,
                       fg_color=COLORS["card"], hover_color=COLORS["hover"],
                       text_color=COLORS["text"]).pack(side="left", padx=(8, 0))
 
@@ -131,7 +137,36 @@ class ToolboxPage(ctk.CTkFrame):
         self.tool_body = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.tool_body.pack(fill="both", expand=True, padx=32, pady=(0, 8))
 
+        # 先让工具箱外壳完成首帧，再构建默认工具的数十个组件。
+        # 这样导航点击立即有响应，重组件在下一轮事件循环补齐。
+        self._initial_tool_pending = True
+        self._initial_tool_job = self.after(10, self._show_initial_tool)
+
+    def _show_initial_tool(self):
+        if not self.winfo_exists():
+            return
+        self._initial_tool_pending = False
+        self._initial_tool_job = None
         self._switch_tool("search_by_text")
+
+    def refresh(self):
+        """仅在识别目标确实变化时刷新联动内容，避免重复构建整个页面。"""
+        if getattr(self, "_initial_tool_pending", False):
+            return
+        if (hasattr(self, "tool_var")
+                and self.tool_var.get() == "search_by_text"
+                and self._current_search_preset_signature()
+                != getattr(self, "_search_preset_signature", ())):
+            self._switch_tool("search_by_text")
+
+    def _current_search_preset_signature(self):
+        from core.recognition_targets import search_presets
+        from core import reference_manager as ref_mgr
+        return tuple(
+            (preset["name"], preset["query"],
+             ref_mgr.count_reference_images("target", preset["name"]))
+            for preset in search_presets(self.app.config_manager.config)[:8]
+        )
 
     def _toggle_more_tools(self):
         """展开/收起更多工具。"""
@@ -146,6 +181,10 @@ class ToolboxPage(ctk.CTkFrame):
             self.more_tools_visible = True
 
     def _switch_tool(self, tool_key):
+        if getattr(self, "_initial_tool_job", None) is not None:
+            self.after_cancel(self._initial_tool_job)
+            self._initial_tool_job = None
+            self._initial_tool_pending = False
         self.tool_var.set(tool_key)
         for k, btn in self.tool_buttons.items():
             if k == tool_key:
@@ -245,7 +284,7 @@ class ToolboxPage(ctk.CTkFrame):
 
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
         btn_row.pack(fill="x", padx=24, pady=(0, 12))
-        ctk.CTkButton(btn_row, text="🎨 开始转换", command=self._run_vectorize,
+        ctk.CTkButton(btn_row, text="开始转换", command=self._run_vectorize,
                       **primary_button_style()).pack(side="left", padx=(0, 12))
         self.vec_status_var = ctk.StringVar(value="")
         ctk.CTkLabel(btn_row, textvariable=self.vec_status_var,
@@ -254,7 +293,7 @@ class ToolboxPage(ctk.CTkFrame):
         preview_frame = ctk.CTkFrame(card, fg_color=COLORS["bg"], corner_radius=8)
         preview_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
         self.vec_preview = scrolledtext.ScrolledText(preview_frame, wrap="word",
-                                                     font=("SF Mono", 10), bg="#f8f9fa",
+                                                     font=font_mono(10), bg="#f8f9fa",
                                                      fg="#1D1D1F", relief="flat")
         self.vec_preview.pack(fill="both", expand=True, padx=8, pady=8)
         self.vec_preview.insert("1.0", "SVG 预览将显示在这里...")
@@ -292,7 +331,7 @@ class ToolboxPage(ctk.CTkFrame):
                 else:
                     self.app.root.after(0, lambda: self.vec_status_var.set("转换失败"))
             except Exception as e:
-                self.app.root.after(0, lambda: self.vec_status_var.set(f"错误：{e}"))
+                self.app.root.after(0, lambda error=e: self.vec_status_var.set(f"错误：{error}"))
 
         threading.Thread(target=_convert, daemon=True).start()
 
@@ -330,7 +369,7 @@ class ToolboxPage(ctk.CTkFrame):
                          font=font_safe(13, "normal"),
                          text_color=COLORS["text_secondary"]).pack(anchor="w", padx=24, pady=(0, 16))
         else:
-            ctk.CTkLabel(card, text="⚠️ CLIP 未安装，使用慢速模式。安装后体验 10 倍提升：pip install sentence-transformers faiss-cpu",
+            ctk.CTkLabel(card, text="CLIP 快搜未安装，将使用分批识别与缓存模式；源码运行版可选安装 sentence-transformers + faiss-cpu",
                          font=font_safe(12, "normal"),
                          text_color=COLORS["warning"]).pack(anchor="w", padx=24, pady=(0, 16))
 
@@ -339,7 +378,7 @@ class ToolboxPage(ctk.CTkFrame):
         dir_row.pack(fill="x", padx=24, pady=(0, 12))
         ctk.CTkLabel(dir_row, text="搜索文件夹", font=font_safe(13, "normal"),
                      text_color=COLORS["text_secondary"], width=90).pack(side="left")
-        self.search_dir_var = ctk.StringVar(value=self.app.output_var.get() or os.path.expanduser("~/Desktop"))
+        self.search_dir_var = ctk.StringVar(value=self.app.output_var.get() or str(desktop_dir()))
         ctk.CTkEntry(dir_row, textvariable=self.search_dir_var, font=font_safe(13, "normal"),
                      height=36, fg_color=COLORS["bg"], border_color=COLORS["border"]).pack(
                          side="left", fill="x", expand=True, padx=(12, 8))
@@ -350,7 +389,7 @@ class ToolboxPage(ctk.CTkFrame):
         if clip_ok:
             index_row = ctk.CTkFrame(card, fg_color="transparent")
             index_row.pack(fill="x", padx=24, pady=(0, 12))
-            self.clip_index_btn = ctk.CTkButton(index_row, text="📋 建立索引",
+            self.clip_index_btn = ctk.CTkButton(index_row, text="建立索引",
                                                 command=self._build_clip_index,
                                                 width=120, **secondary_button_style())
             self.clip_index_btn.pack(side="left")
@@ -369,8 +408,37 @@ class ToolboxPage(ctk.CTkFrame):
         self.search_query_var = ctk.StringVar(value="")
         ctk.CTkEntry(query_row, textvariable=self.search_query_var, font=font_safe(13, "normal"),
                      height=36, fg_color="white", border_color=COLORS["border"],
-                     placeholder_text="例如：红色汽车在停车场 / 工厂车间设备 / 负责人和客户合影").pack(
+                     placeholder_text="例如：红色汽车在停车场 / 室内工作场景 / 多人户外合影").pack(
                          side="left", fill="x", expand=True, padx=(12, 0))
+
+        # 与设置中的通用识别目标联动，点击即可填入同一套搜索描述。
+        from core.recognition_targets import search_presets
+        from core import reference_manager as ref_mgr
+        presets = search_presets(self.app.config_manager.config)
+        self._search_preset_signature = tuple(
+            (preset["name"], preset["query"],
+             ref_mgr.count_reference_images("target", preset["name"]))
+            for preset in presets[:8]
+        )
+        if presets:
+            preset_row = ctk.CTkFrame(card, fg_color="transparent")
+            preset_row.pack(fill="x", padx=24, pady=(0, 12))
+            ctk.CTkLabel(
+                preset_row, text="识别目标", font=font_safe(12),
+                text_color=COLORS["text_secondary"], width=90,
+            ).pack(side="left")
+            for preset in presets[:8]:
+                ref_count = ref_mgr.count_reference_images("target", preset["name"])
+                ctk.CTkButton(
+                    preset_row,
+                    text=f"{preset['name']} · {ref_count}图" if ref_count else preset["name"],
+                    width=0, height=28,
+                    command=(lambda item=dict(preset): self._run_search_target(item))
+                    if ref_count else (lambda q=preset["query"]: self.search_query_var.set(q)),
+                    font=font_safe(11), fg_color=COLORS["card"],
+                    hover_color=COLORS["hover"], text_color=COLORS["text"],
+                    border_color=COLORS["border"], border_width=1, corner_radius=8,
+                ).pack(side="left", padx=(12 if preset is presets[0] else 6, 0))
 
         # 选项与按钮
         opt_row = ctk.CTkFrame(card, fg_color="transparent")
@@ -380,7 +448,7 @@ class ToolboxPage(ctk.CTkFrame):
         self.top_k_var = ctk.StringVar(value="10")
         ctk.CTkEntry(opt_row, textvariable=self.top_k_var, width=60, height=30,
                      font=font_safe(13, "normal")).pack(side="left", padx=(8, 0))
-        self.search_btn = ctk.CTkButton(opt_row, text="🔍 搜索", command=self._run_search_by_text,
+        self.search_btn = ctk.CTkButton(opt_row, text="搜索", command=self._run_search_by_text,
                       **primary_button_style())
         self.search_btn.pack(side="left", padx=(24, 0))
         self.search_status_var = ctk.StringVar(value="")
@@ -392,7 +460,7 @@ class ToolboxPage(ctk.CTkFrame):
         result_frame = ctk.CTkFrame(card, fg_color="transparent")
         result_frame.pack(fill="both", expand=True, padx=24, pady=(8, 20))
         self.search_result_text = scrolledtext.ScrolledText(result_frame, wrap="word",
-                                                            font=("SF Mono", 12) if os.name != "nt" else ("Consolas", 12),
+                                                            font=font_mono(12),
                                                             bg="#f8f9fa", fg="#1D1D1F",
                                                             relief="flat")
         self.search_result_text.pack(fill="both", expand=True)
@@ -421,6 +489,7 @@ class ToolboxPage(ctk.CTkFrame):
         self._clip_cancel = False
 
         def _run():
+            self.app.set_task_running(True, "建立图片搜索索引")
             ok, msg = clip_search.index_folder(
                 search_dir,
                 progress_cb=lambda done, total: self.after(0, lambda:
@@ -428,7 +497,8 @@ class ToolboxPage(ctk.CTkFrame):
                 cancel_cb=lambda: self._clip_cancel
             )
             def _done():
-                self.clip_index_btn.configure(state="normal", text="📋 建立索引")
+                self.app.set_task_running(False)
+                self.clip_index_btn.configure(state="normal", text="建立索引")
                 if ok:
                     self.clip_index_status.set(msg)
                     self._log(f"✅ {msg}")
@@ -437,6 +507,78 @@ class ToolboxPage(ctk.CTkFrame):
             self.after(0, _done)
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def _run_search_target(self, target):
+        """按一个具体对象的参考照片搜索，而不是把名称当普通关键词。"""
+        from core import clip_search
+        from core import reference_manager as ref_mgr
+
+        name = target.get("name", "").strip()
+        refs = ref_mgr.get_reference_images("target", name)
+        self.search_query_var.set(name)
+        if not refs:
+            messagebox.showinfo("尚无参考照片", f"请先在设置中为「{name}」添加参考照片。")
+            return
+        search_dir = self.search_dir_var.get().strip()
+        if not os.path.isdir(search_dir):
+            messagebox.showwarning("路径错误", "搜索文件夹不存在")
+            return
+        if not clip_search.is_available():
+            model = self.toolbox_model_var.get()
+            if not is_vision_model(model):
+                messagebox.showwarning(
+                    "模型不可用", "按参考图搜索需要视觉模型，请切换到 llava/moondream 等模型。")
+                return
+            if not messagebox.askyesno(
+                    "使用兼容搜索模式",
+                    "当前没有 CLIP 快搜引擎。SnapSort 可以让视觉模型每次同时比较 3 张照片，"
+                    "并缓存结果；第一次较慢，之后只处理新增或修改的照片。\n\n现在开始吗？"):
+                return
+            from core.object_search import search_object
+            self.search_status_var.set(f"正在识别具体对象「{name}」…")
+            self.app.set_task_running(True, f"识别 {name}")
+
+            def _vlm_reference_search():
+                results, stats = search_object(
+                    search_dir, name, target.get("query", ""), refs, model,
+                    top_n=int(self.top_k_var.get() or "10"),
+                    progress_cb=lambda done, total: self.after(
+                        0, lambda: self.search_status_var.set(
+                            f"识别 {done}/{total}（其余已复用缓存）")),
+                )
+                self.after(0, lambda: self._show_object_search_results(results, stats))
+
+            threading.Thread(target=_vlm_reference_search, daemon=True).start()
+            return
+        if not clip_search.index_matches_folder(search_dir):
+            messagebox.showinfo(
+                "需要先建立索引",
+                "这个文件夹还没有图片索引。请先点击「建立索引」；以后只会增量处理新增或修改的照片。",
+            )
+            return
+
+        self.search_status_var.set(f"正在按参考图查找「{name}」…")
+        self.app.set_task_running(True, f"查找 {name}")
+
+        def _search():
+            try:
+                results = clip_search.search_by_reference(
+                    refs, top_n=int(self.top_k_var.get() or "10"),
+                    text_hint=target.get("query", ""),
+                )
+                self.after(0, lambda: self._show_search_results(results, len(results)))
+            except Exception as exc:
+                message = str(exc)
+                self.after(0, lambda: self._append_search(f"参考图搜索失败：{message}\n"))
+                self.after(0, lambda: self.app.set_task_running(False))
+
+        threading.Thread(target=_search, daemon=True).start()
+
+    def _show_object_search_results(self, results, stats):
+        self._show_search_results(results, stats.get("total", 0))
+        self.search_status_var.set(
+            f"完成：新处理 {stats.get('processed', 0)}，"
+            f"复用缓存 {stats.get('reused', 0)}，匹配 {len(results)}")
 
     def _run_search_by_text(self):
         query = self.search_query_var.get().strip()
@@ -459,19 +601,16 @@ class ToolboxPage(ctk.CTkFrame):
         if clip_ok:
             # CLIP 模式：毫秒级语义搜索
             self.search_status_var.set("CLIP 搜索中...")
+            self.app.set_task_running(True, "图片搜索")
 
             def _clip_search():
-                # 确保索引存在
-                info = clip_search.get_index_info()
-                if info.get("total_images", 0) == 0:
+                if not clip_search.index_matches_folder(search_dir):
                     self.after(0, lambda: self._append_search(
-                        "⚠️ 尚未建立索引，正在自动索引...\n"))
-                    # 自动建立索引
-                    ok, msg = clip_search.index_folder(search_dir)
-                    if not ok:
-                        self.after(0, lambda: self._append_search(f"❌ {msg}\n"))
-                        self.after(0, lambda: self.search_status_var.set(""))
-                        return
+                        "尚未为这个文件夹建立索引。请先点击「建立索引」。\n"
+                        "SnapSort 不再在搜索时突然扫描全部照片，以免电脑卡顿。\n"))
+                    self.after(0, lambda: self.search_status_var.set("等待建立索引"))
+                    self.after(0, lambda: self.app.set_task_running(False))
+                    return
 
                 results = clip_search.search(query, top_n=int(self.top_k_var.get() or "10"))
                 self.after(0, lambda: self._show_search_results(results, len(results)))
@@ -486,7 +625,15 @@ class ToolboxPage(ctk.CTkFrame):
                     f"当前 {model} 不是视觉模型。\n请切换到 llava/moondream 等，或安装 CLIP：\npip install sentence-transformers faiss-cpu")
                 return
 
+            if not messagebox.askyesno(
+                    "即将进行慢速搜索",
+                    "图片快搜引擎尚未安装。继续会让本地视觉模型逐张查看照片，"
+                    "耗时较长并可能占满 CPU/GPU。\n\n仍然继续吗？"):
+                self.search_status_var.set("已取消慢速搜索")
+                return
+
             self.search_status_var.set("VLM 慢速搜索中...")
+            self.app.set_task_running(True, "慢速图片搜索")
 
             def _vlm_search():
                 images = []
@@ -499,6 +646,7 @@ class ToolboxPage(ctk.CTkFrame):
                 if not images:
                     self.after(0, lambda: self._append_search("未找到图片文件\n"))
                     self.after(0, lambda: self.search_status_var.set(""))
+                    self.after(0, lambda: self.app.set_task_running(False))
                     return
 
                 top_k = min(int(self.top_k_var.get() or "10"), len(images))
@@ -528,6 +676,7 @@ class ToolboxPage(ctk.CTkFrame):
             threading.Thread(target=_vlm_search, daemon=True).start()
 
     def _show_search_results(self, results, total):
+        self.app.set_task_running(False)
         self.search_result_text.config(state="normal")
         self.search_result_text.delete("1.0", "end")
         self.search_status_var.set(f"完成，返回 {len(results)} 张")
@@ -580,7 +729,7 @@ class ToolboxPage(ctk.CTkFrame):
         result_frame = ctk.CTkFrame(card, fg_color="transparent")
         result_frame.pack(fill="both", expand=True, padx=24, pady=(8, 20))
         self.desc_result_text = scrolledtext.ScrolledText(result_frame, wrap="word",
-                                                          font=("SF Mono", 12), bg="#f8f9fa",
+                                                          font=font_mono(12), bg="#f8f9fa",
                                                           fg="#1D1D1F", relief="flat")
         self.desc_result_text.pack(fill="both", expand=True)
 
@@ -629,7 +778,7 @@ class ToolboxPage(ctk.CTkFrame):
                 else:
                     self.app.root.after(0, lambda: self._show_describe_result(f"错误：HTTP {r.status_code}"))
             except Exception as e:
-                self.app.root.after(0, lambda: self._show_describe_result(f"错误：{e}"))
+                self.app.root.after(0, lambda error=e: self._show_describe_result(f"错误：{error}"))
 
         threading.Thread(target=_describe, daemon=True).start()
 
@@ -687,7 +836,7 @@ class ToolboxPage(ctk.CTkFrame):
         chat_area = ctk.CTkFrame(card, fg_color=COLORS["bg"], corner_radius=8)
         chat_area.pack(fill="both", expand=True, padx=24, pady=(0, 20))
         self.qa_history = scrolledtext.ScrolledText(chat_area, wrap="word", height=16,
-                                                    font=("SF Mono", 12), bg="#f8f9fa",
+                                                    font=font_mono(12), bg="#f8f9fa",
                                                     fg="#1D1D1F", relief="flat")
         self.qa_history.pack(fill="both", expand=True, padx=8, pady=8)
         self.qa_history.insert("1.0", "🤖 请选择图片并输入问题\n")
@@ -738,7 +887,7 @@ class ToolboxPage(ctk.CTkFrame):
                 else:
                     self.app.root.after(0, lambda: self._show_qa_reply(f"[错误] HTTP {r.status_code}"))
             except Exception as e:
-                self.app.root.after(0, lambda: self._show_qa_reply(f"[错误] {e}"))
+                self.app.root.after(0, lambda error=e: self._show_qa_reply(f"[错误] {error}"))
 
         threading.Thread(target=_ask, daemon=True).start()
 
@@ -794,7 +943,7 @@ class ToolboxPage(ctk.CTkFrame):
         input_frame = ctk.CTkFrame(card, fg_color="transparent")
         input_frame.pack(fill="x", padx=24, pady=(0, 8))
         self.assistant_input = scrolledtext.ScrolledText(input_frame, wrap="word",
-                                                          font=("SF Mono", 12), bg="#f8f9fa",
+                                                          font=font_mono(12), bg="#f8f9fa",
                                                           fg="#999999", relief="flat", height=4)
         self.assistant_input.pack(fill="x")
         self._assistant_placeholder = True
@@ -817,7 +966,7 @@ class ToolboxPage(ctk.CTkFrame):
         result_frame = ctk.CTkFrame(card, fg_color=COLORS["bg"], corner_radius=8)
         result_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
         self.assistant_result = scrolledtext.ScrolledText(result_frame, wrap="word",
-                                                           font=("SF Mono", 12), bg="#f8f9fa",
+                                                           font=font_mono(12), bg="#f8f9fa",
                                                            fg="#1D1D1F", relief="flat")
         self.assistant_result.pack(fill="both", expand=True, padx=8, pady=8)
         self.assistant_result.insert("1.0", "AI 回复将显示在这里...")
@@ -936,7 +1085,7 @@ class ToolboxPage(ctk.CTkFrame):
                 self.app.root.after(0, lambda: self._show_assistant_result(
                     "\u274c 请求超时（300秒）\n\n模型可能正在加载中，请稍后重试。"))
             except Exception as e:
-                self.app.root.after(0, lambda: self._show_assistant_result(f"\u274c 错误：{e}"))
+                self.app.root.after(0, lambda error=e: self._show_assistant_result(f"\u274c 错误：{error}"))
 
         threading.Thread(target=_generate, daemon=True).start()
 
@@ -962,7 +1111,7 @@ class ToolboxPage(ctk.CTkFrame):
         dir_row.pack(fill="x", padx=24, pady=(0, 12))
         ctk.CTkLabel(dir_row, text="检测目录", font=font_safe(13, "normal"),
                      text_color=COLORS["text_secondary"], width=80).pack(side="left")
-        self.dedup_dir_var = ctk.StringVar(value=self.app.output_var.get() or os.path.expanduser("~/Desktop"))
+        self.dedup_dir_var = ctk.StringVar(value=self.app.output_var.get() or str(desktop_dir()))
         ctk.CTkEntry(dir_row, textvariable=self.dedup_dir_var, font=font_safe(13, "normal"),
                      height=36, fg_color=COLORS["bg"], border_color=COLORS["border"]).pack(
                          side="left", fill="x", expand=True, padx=(12, 12))
@@ -971,7 +1120,7 @@ class ToolboxPage(ctk.CTkFrame):
 
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
         btn_row.pack(fill="x", padx=24, pady=(0, 12))
-        ctk.CTkButton(btn_row, text="🔍 开始检测", command=self._run_dedup,
+        ctk.CTkButton(btn_row, text="开始检测", command=self._run_dedup,
                       **primary_button_style()).pack(side="left", padx=(0, 12))
         # 检测模式：精确 / 相似
         self.dedup_mode_var = ctk.StringVar(value="exact")
@@ -991,7 +1140,7 @@ class ToolboxPage(ctk.CTkFrame):
 
         # 结果摘要区（初始紧凑，检测后展开）
         self.dedup_result = scrolledtext.ScrolledText(card, wrap="word",
-                                                       font=("SF Mono", 12), bg="#f8f9fa",
+                                                       font=font_mono(12), bg="#f8f9fa",
                                                        fg="#1D1D1F", relief="flat", height=5)
         self.dedup_result.pack(fill="x", padx=24, pady=(0, 8))
         self.dedup_result.insert("1.0",
@@ -1145,19 +1294,19 @@ class ToolboxPage(ctk.CTkFrame):
                 btn_row = ctk.CTkFrame(row, fg_color="transparent")
                 btn_row.pack(fill="x", padx=12, pady=(0, 8))
 
-                ctk.CTkButton(btn_row, text="📂 打开原始", width=90, height=28,
+                ctk.CTkButton(btn_row, text="打开原始", width=90, height=28,
                               font=font_safe(11, "normal"),
                               fg_color=COLORS["card"], hover_color=COLORS["hover"],
                               text_color=COLORS["text"],
                               command=lambda p=orig: self._open_file_location(p)).pack(side="left", padx=(0, 6))
 
-                ctk.CTkButton(btn_row, text="📂 打开重复", width=90, height=28,
+                ctk.CTkButton(btn_row, text="打开重复", width=90, height=28,
                               font=font_safe(11, "normal"),
                               fg_color=COLORS["card"], hover_color=COLORS["hover"],
                               text_color=COLORS["text"],
                               command=lambda p=dup: self._open_file_location(p)).pack(side="left", padx=(0, 16))
 
-                ctk.CTkButton(btn_row, text="🗑 删除此重复文件", width=130, height=28,
+                ctk.CTkButton(btn_row, text="删除此重复文件", width=130, height=28,
                               font=font_safe(11, "normal"),
                               fg_color=COLORS["danger"], hover_color="#E6352B",
                               text_color="white",
@@ -1167,7 +1316,8 @@ class ToolboxPage(ctk.CTkFrame):
 
     def _open_file_location(self, path):
         """在文件管理器中打开文件所在位置"""
-        import subprocess, platform
+        import platform
+        import subprocess
         if not os.path.exists(path):
             messagebox.showwarning("文件不存在", f"文件已不存在：\n{path}")
             return
@@ -1183,17 +1333,20 @@ class ToolboxPage(ctk.CTkFrame):
             messagebox.showerror("错误", f"无法打开：{e}")
 
     def _dedup_delete(self, path, row_widget):
-        """删除重复文件并移除对应操作行"""
+        """把重复文件移到系统回收站，并移除对应操作行。"""
         if not os.path.exists(path):
             row_widget.destroy()
             return
-        if messagebox.askyesno("确认删除", f"确定要删除此重复文件吗？\n\n{path}\n\n⚠️ 此操作不可撤销！"):
+        if messagebox.askyesno(
+            "移到回收站",
+            f"确定把此重复文件移到系统回收站吗？\n\n{path}\n\n需要时可以从回收站恢复。",
+        ):
             try:
-                os.remove(path)
+                send2trash(path)
                 row_widget.destroy()
-                messagebox.showinfo("已删除", f"已删除：\n{os.path.basename(path)}")
+                messagebox.showinfo("已移到回收站", os.path.basename(path))
             except Exception as e:
-                messagebox.showerror("删除失败", str(e))
+                messagebox.showerror("操作失败", str(e))
 
     # ── 自定义重命名 ──
     def _build_custom_rename(self):
@@ -1211,7 +1364,7 @@ class ToolboxPage(ctk.CTkFrame):
         dir_row.pack(fill="x", padx=24, pady=(0, 12))
         ctk.CTkLabel(dir_row, text="目标文件夹", font=font_safe(13, "normal"),
                      text_color=COLORS["text_secondary"], width=80).pack(side="left")
-        self.rename_dir_var = ctk.StringVar(value=self.app.output_var.get() or os.path.expanduser("~/Desktop"))
+        self.rename_dir_var = ctk.StringVar(value=self.app.output_var.get() or str(desktop_dir()))
         ctk.CTkEntry(dir_row, textvariable=self.rename_dir_var, font=font_safe(13, "normal"),
                      height=36, fg_color=COLORS["bg"], border_color=COLORS["border"]).pack(
                          side="left", fill="x", expand=True, padx=(12, 12))
@@ -1276,9 +1429,9 @@ class ToolboxPage(ctk.CTkFrame):
         # 操作按钮
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
         btn_row.pack(fill="x", padx=24, pady=(0, 8))
-        ctk.CTkButton(btn_row, text="👁 预览", command=self._preview_rename,
+        ctk.CTkButton(btn_row, text="预览", command=self._preview_rename,
                       **secondary_button_style()).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(btn_row, text="✅ 确认重命名", command=self._apply_rename,
+        ctk.CTkButton(btn_row, text="确认重命名", command=self._apply_rename,
                       **primary_button_style()).pack(side="left", padx=(0, 8))
         self.rename_status_var = ctk.StringVar(value="")
         ctk.CTkLabel(btn_row, textvariable=self.rename_status_var,
@@ -1289,7 +1442,7 @@ class ToolboxPage(ctk.CTkFrame):
         result_frame = ctk.CTkFrame(card, fg_color=COLORS["bg"], corner_radius=8)
         result_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
         self.rename_preview = scrolledtext.ScrolledText(result_frame, wrap="word",
-                                                        font=("SF Mono", 12), bg="#f8f9fa",
+                                                        font=font_mono(12), bg="#f8f9fa",
                                                         fg="#1D1D1F", relief="flat")
         self.rename_preview.pack(fill="both", expand=True, padx=8, pady=8)
         self.rename_preview.insert("1.0", "点击「👁 预览」查看重命名方案\n"
@@ -1370,8 +1523,15 @@ class ToolboxPage(ctk.CTkFrame):
         if not name.endswith(ext) and ext:
             name += ext
 
-        # 清理非法字符
-        name = re.sub(r'[\\/:*?"<>|]', '', name)
+        # 清理 Windows/macOS 非法字符，并避免空名称与保留设备名
+        name = re.sub(r'[\\/:*?"<>|]', '_', name).rstrip(" .")
+        stem, suffix = os.path.splitext(name)
+        reserved = {"CON", "PRN", "AUX", "NUL"}
+        reserved.update(f"COM{i}" for i in range(1, 10))
+        reserved.update(f"LPT{i}" for i in range(1, 10))
+        if not stem or stem.upper() in reserved:
+            stem = f"_{stem or '未命名'}"
+        name = stem + suffix
         return name
 
     def _preview_rename(self):
@@ -1446,7 +1606,6 @@ class ToolboxPage(ctk.CTkFrame):
             return
 
         # 确认
-        total = len(self._rename_preview_data)
         to_rename = [(old, new) for old, new, nn, on in self._rename_preview_data if nn != on]
 
         if not to_rename:
@@ -1478,7 +1637,7 @@ class ToolboxPage(ctk.CTkFrame):
 
                 os.rename(old_path, new_path)
                 ok += 1
-            except Exception as e:
+            except OSError:
                 fail += 1
 
         # 更新预览显示结果
@@ -1595,7 +1754,7 @@ class ToolboxPage(ctk.CTkFrame):
 
         # 日志
         self.fc_log = scrolledtext.ScrolledText(card, height=10, wrap="word",
-                                                font=("SF Mono", 11) if os.name != "nt" else ("Consolas", 11),
+                                                font=font_mono(11),
                                                 bg="#1e1b18", fg="#e2ddd5",
                                                 relief="flat", borderwidth=0)
         self.fc_log.pack(fill="both", expand=True, padx=24, pady=(0, 20))
@@ -1623,11 +1782,6 @@ class ToolboxPage(ctk.CTkFrame):
 
         def _run():
             from core.image_utils import _safe_open_image
-            try:
-                from PIL import Image
-            except ImportError:
-                self._fc_log("❌ 需要 Pillow 库")
-                return
 
             files = []
             for root, _, fnames in os.walk(folder):
@@ -1702,9 +1856,9 @@ class ToolboxPage(ctk.CTkFrame):
         card = ctk.CTkFrame(self.tool_body, **card_frame_style())
         card.pack(fill="both", expand=True)
 
-        ctk.CTkLabel(card, text="EXIF 元数据查看", font=font_safe(18, "bold"),
+        ctk.CTkLabel(card, text="EXIF 信息查看与修改", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", padx=24, pady=(20, 8))
-        ctk.CTkLabel(card, text="查看图片的拍摄时间、设备、GPS 等元数据。无 EXIF 的图片可能是截图或转发图。",
+        ctk.CTkLabel(card, text="查看设备、GPS 等原始信息，也可修改日期、标题、描述、作者、关键词、版权和评分。",
                      font=font_safe(13, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w", padx=24, pady=(0, 16))
 
@@ -1719,8 +1873,59 @@ class ToolboxPage(ctk.CTkFrame):
                       command=self._exif_pick_file,
                       **secondary_button_style()).pack(side="left")
 
+        editor = ctk.CTkFrame(card, fg_color=COLORS["bg"], corner_radius=10)
+        editor.pack(fill="x", padx=24, pady=(0, 12))
+        self.exif_edit_vars = {
+            key: ctk.StringVar(value="")
+            for key in ("date", "title", "description", "author", "copyright", "keywords", "rating")
+        }
+
+        def add_field(parent, label, key, width=None, placeholder=""):
+            field = ctk.CTkFrame(parent, fg_color="transparent")
+            field.pack(side="left", fill="x", expand=width is None, padx=(0, 12))
+            ctk.CTkLabel(field, text=label, font=font_safe(11),
+                         text_color=COLORS["text_secondary"]).pack(anchor="w")
+            entry = ctk.CTkEntry(
+                field, textvariable=self.exif_edit_vars[key], height=32,
+                width=width or 200, font=font_safe(12), fg_color="white",
+                border_color=COLORS["border"], placeholder_text=placeholder,
+            )
+            entry.pack(fill="x")
+
+        first_row = ctk.CTkFrame(editor, fg_color="transparent")
+        first_row.pack(fill="x", padx=14, pady=(12, 8))
+        add_field(first_row, "拍摄日期", "date", placeholder="YYYY:MM:DD HH:MM:SS")
+        add_field(first_row, "标题", "title")
+        add_field(first_row, "评分", "rating", width=72, placeholder="0–5")
+
+        second_row = ctk.CTkFrame(editor, fg_color="transparent")
+        second_row.pack(fill="x", padx=14, pady=(0, 8))
+        add_field(second_row, "描述", "description")
+        add_field(second_row, "关键词", "keywords", placeholder="用分号分隔")
+
+        third_row = ctk.CTkFrame(editor, fg_color="transparent")
+        third_row.pack(fill="x", padx=14, pady=(0, 12))
+        add_field(third_row, "作者", "author")
+        add_field(third_row, "版权", "copyright")
+        self.exif_backup_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            third_row, text="首次修改前备份", variable=self.exif_backup_var,
+            font=font_safe(11), text_color=COLORS["text"],
+            fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
+        ).pack(side="left", padx=(0, 12), pady=(18, 0))
+        ctk.CTkButton(
+            third_row, text="保存元数据", command=self._save_exif_metadata,
+            width=120, **primary_button_style(),
+        ).pack(side="left", pady=(16, 0))
+
+        self.exif_edit_status = ctk.StringVar(value="选择图片后即可编辑")
+        ctk.CTkLabel(
+            editor, textvariable=self.exif_edit_status, font=font_safe(11),
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=14, pady=(0, 10))
+
         self.exif_result = scrolledtext.ScrolledText(card, height=300, wrap="word",
-                                                     font=("SF Mono", 12) if os.name != "nt" else ("Consolas", 12),
+                                                     font=font_mono(12),
                                                      bg="#1e1b18", fg="#e2ddd5",
                                                      relief="flat", borderwidth=0)
         self.exif_result.pack(fill="both", expand=True, padx=24, pady=(0, 20))
@@ -1730,7 +1935,47 @@ class ToolboxPage(ctk.CTkFrame):
                                       filetypes=[("图片", "*.jpg *.jpeg *.png *.heic *.heif *.webp *.bmp"), ("所有文件", "*.*")])
         if f:
             self.exif_file_var.set(f)
+            self._load_exif_editor(f)
             self._exif_show(f)
+
+    def _load_exif_editor(self, path):
+        from core.photo_metadata import read_photo_metadata
+
+        try:
+            values = read_photo_metadata(path)
+            for key, variable in self.exif_edit_vars.items():
+                variable.set(values.get(key, ""))
+            self.exif_edit_status.set("已读取；留空并保存可删除对应字段")
+        except (OSError, ValueError) as exc:
+            self.exif_edit_status.set(f"读取失败：{exc}")
+
+    def _save_exif_metadata(self):
+        from datetime import datetime
+
+        from core.photo_metadata import update_photo_metadata
+
+        path = self.exif_file_var.get().strip()
+        if not os.path.isfile(path):
+            messagebox.showwarning("未选择图片", "请先选择需要修改的图片")
+            return
+        values = {key: variable.get().strip() for key, variable in self.exif_edit_vars.items()}
+        if values["date"]:
+            try:
+                datetime.strptime(values["date"], "%Y:%m:%d %H:%M:%S")
+            except ValueError:
+                messagebox.showwarning("日期格式错误", "请使用 YYYY:MM:DD HH:MM:SS")
+                return
+        try:
+            backup = update_photo_metadata(
+                path, values, create_backup=self.exif_backup_var.get())
+            self._load_exif_editor(path)
+            self._exif_show(path)
+            status = "保存成功"
+            if backup:
+                status += f"；原图备份在 {backup.parent.name} 文件夹"
+            self.exif_edit_status.set(status)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("保存失败", str(exc))
 
     def _exif_show(self, path):
         self.exif_result.delete("1.0", "end")
@@ -1744,9 +1989,11 @@ class ToolboxPage(ctk.CTkFrame):
         self._exif_log("─" * 40)
 
         try:
-            from core.image_utils import _safe_open_image
-            from PIL.ExifTags import TAGS
             import hashlib as _hashlib
+
+            from PIL.ExifTags import TAGS
+
+            from core.image_utils import _safe_open_image
 
             img, opened = _safe_open_image(path)
             if img is None:
@@ -1774,7 +2021,7 @@ class ToolboxPage(ctk.CTkFrame):
             if not exif:
                 self._exif_log("⚠️ 无 EXIF 数据 — 可能是截图、转发图或已被压缩")
                 self._exif_log("   此图片的创建时间可能不准确（会用文件修改时间替代）")
-                self._exif_log("   可使用「批量 EXIF 日期修正」工具手动写入日期")
+                self._exif_log("   可在上方编辑区直接补充常用信息")
                 return
 
             # 常用 EXIF 标签的中文名映射
@@ -1782,6 +2029,14 @@ class ToolboxPage(ctk.CTkFrame):
                 306: "拍摄日期(DateTime)",
                 36867: "原始拍摄时间(DateTimeOriginal)",
                 36868: "数字化时间(DateTimeDigitized)",
+                270: "描述(ImageDescription)",
+                315: "作者(Artist)",
+                33432: "版权(Copyright)",
+                40091: "标题(XPTitle)",
+                40092: "描述(XPComment)",
+                40093: "作者(XPAuthor)",
+                40094: "关键词(XPKeywords)",
+                18246: "评分(Rating)",
                 271: "设备厂商(Make)",
                 272: "设备型号(Model)",
                 33434: "曝光时间(ExposureTime)",
@@ -1896,7 +2151,7 @@ class ToolboxPage(ctk.CTkFrame):
 
         # 日志
         self.df_log = scrolledtext.ScrolledText(card, height=10, wrap="word",
-                                                font=("SF Mono", 11) if os.name != "nt" else ("Consolas", 11),
+                                                font=font_mono(11),
                                                 bg="#1e1b18", fg="#e2ddd5",
                                                 relief="flat", borderwidth=0)
         self.df_log.pack(fill="both", expand=True, padx=24, pady=(0, 20))
@@ -1936,12 +2191,6 @@ class ToolboxPage(ctk.CTkFrame):
 
         def _run():
             from core.image_utils import _safe_open_image
-            from core.event_classifier import is_screenshot
-            try:
-                from PIL import Image
-            except ImportError:
-                self._df_log("❌ 需要 Pillow 库")
-                return
 
             files = []
             for root, _, fnames in os.walk(folder):
@@ -2128,7 +2377,7 @@ class ToolboxPage(ctk.CTkFrame):
         self.bp_run_btn.configure(command=self._bp_run)
 
         self.bp_log = scrolledtext.ScrolledText(card, height=10, wrap="word",
-                                                font=("SF Mono", 11) if os.name != "nt" else ("Consolas", 11),
+                                                font=font_mono(11),
                                                 bg="#1e1b18", fg="#e2ddd5",
                                                 relief="flat", borderwidth=0)
         self.bp_log.pack(fill="both", expand=True, padx=24, pady=(0, 20))

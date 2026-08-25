@@ -4,8 +4,7 @@
 import os
 from datetime import datetime, timedelta
 
-from core.event_classifier import (
-    group_by_time_interval, BatchRenamer, Checkpoint)
+from core.event_classifier import BatchRenamer, Checkpoint, group_by_time_interval
 
 
 def _make_photo(tmp_path, dt, name):

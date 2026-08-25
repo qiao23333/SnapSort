@@ -5,30 +5,45 @@
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
 # 收集 customtkinter 的数据文件（主题、字体等）
-datas = []
-datas += collect_data_files('customtkinter')
+datas, binaries, hiddenimports = collect_all('customtkinter')
+
+# tkinterdnd2 还需要其原生 tkdnd 二进制文件，只有 hidden import 不够。
+try:
+    dnd_datas, dnd_binaries, dnd_hidden = collect_all('tkinterdnd2')
+    datas += dnd_datas
+    binaries += dnd_binaries
+    hiddenimports += dnd_hidden
+except Exception:
+    pass
 
 # 添加项目内部数据目录
 # spec 文件在 packaging/ 目录下，项目根目录是其父目录
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(SPEC)))
 
-# 确保 data/core/ui 目录被打包
-for folder in ['data', 'core', 'ui', 'packaging']:
-    folder_path = os.path.join(project_root, folder)
-    if os.path.isdir(folder_path):
-        datas.append((folder_path, folder))
+# 只打包只读资源。严禁把 data/ 整体加入安装包，其中可能有用户配置、
+# 人物参考照片、日志和缩略图缓存。
+for filename in ['snapsort_icon.png', 'snapsort_icon_small.png', 'snapsort_icon_minimal.png']:
+    source = os.path.join(project_root, 'data', filename)
+    if os.path.isfile(source):
+        datas.append((source, 'data'))
+
+if sys.platform == 'win32':
+    icon_candidate = os.path.join(project_root, 'data', 'snapsort_icon.ico')
+else:
+    icon_candidate = os.path.join(project_root, 'data', 'snapsort_icon.icns')
+icon_path = icon_candidate if os.path.isfile(icon_candidate) else None
 
 a = Analysis(
     [os.path.join(project_root, 'app.py')],
     pathex=[project_root],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
-    hiddenimports=[
+    hiddenimports=hiddenimports + [
         'customtkinter',
         'customtkinter.windows',
         'customtkinter.windows.widgets',
@@ -42,6 +57,7 @@ a = Analysis(
         'requests',
         'openpyxl',
         'tkinterdnd2',
+        'send2trash',
     ],
     hookspath=[],
     hooksconfig={},
@@ -65,7 +81,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,  # 无控制台窗口
-    icon=os.path.join(project_root, 'data', 'snapsort_icon.icns'),
+    icon=icon_path,
 )
 
 coll = COLLECT(
@@ -84,6 +100,6 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='SnapSort.app',
-        icon=os.path.join(project_root, 'data', 'snapsort_icon.icns'),
+        icon=icon_path,
     bundle_identifier='com.snapsort.app',
     )

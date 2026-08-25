@@ -1,4 +1,4 @@
-# Windows 打包与分发指南 (v2.3)
+# Windows 打包与分发指南 (v3.4)
 
 > 将 SnapSort 打包为 Windows 下可双击运行的 `.exe` 程序，方便分发给同事或客户。
 
@@ -11,11 +11,13 @@ v2.3 之前用 `run.bat` 启动，存在以下问题：
 - 需要手动 `pip install` 依赖
 - 路径/编码问题导致双击后看不到界面
 
-v2.3 使用 PyInstaller 打包为 **exe**，解决所有问题：
+SnapSort 使用 PyInstaller 打包为 **exe**，解决这些问题：
 - 用户不需要安装 Python
 - 依赖全部打包进 exe
 - 双击直接弹出界面
 - 界面不需要 Ollama 也能打开（仅 AI 功能需要）
+- 配置、日志和缓存写入 `%LOCALAPPDATA%\SnapSort`，不会混入安装目录
+- 构建只包含只读图标资源，不会把开发者的照片或配置打进安装包
 
 ---
 
@@ -81,7 +83,7 @@ Compress-Archive -Path dist\SnapSort -DestinationPath SnapSort_Windows.zip
 | Python | **不需要**，已打包进 exe |
 | Ollama | 仅使用 AI 功能时需要安装 |
 | 内存 | 8GB+，llava:13b 建议 16GB |
-| 磁盘空间 | 程序约 200MB + 模型 5-10GB |
+| 磁盘空间 | 当前程序约 70MB + 模型空间（取决于所选模型） |
 
 ### 用户安装 Ollama（仅 AI 功能需要）
 
@@ -111,10 +113,10 @@ A:
 3. 从 CMD 运行 `SnapSort.exe` 查看错误信息
 
 **Q: 打包后文件很大？**
-A: 正常。PyInstaller 打包了 Python 运行时和所有依赖，约 150-300MB。使用 `--onedir`（spec 默认）比 `--onefile` 启动快。
+A: 正常。PyInstaller 打包了 Python 运行时和依赖，当前构建约 70MB，后续会随依赖变化。使用 `--onedir`（spec 默认）比 `--onefile` 启动快。
 
 **Q: 界面打不开，提示 tkinter 错误？**
-A: v2.3 的 exe 打包已包含 tkinter，不会出现此问题。如果使用源码模式（run.bat），需要确保 Python 安装时勾选了 tcl/tk。
+A: v3.4 的 exe 打包已包含 tkinter。如果使用源码模式（run.bat），需要确保 Python 安装时勾选了 tcl/tk。
 
 **Q: 模型列表为空？**
 A: 说明 Ollama 未运行或未安装模型。先安装 Ollama 并 `ollama pull llava:13b`。

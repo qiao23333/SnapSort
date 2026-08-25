@@ -6,9 +6,13 @@ __pycache__/
 venv/
 
 # 运行时数据与缓存
-data/
+data/*
 !data/snapsort_icon.png
 !data/snapsort_icon_small.png
+!data/snapsort_icon_minimal.png
+!data/snapsort_icon_master.png
+!data/snapsort_icon.icns
+!data/snapsort_icon.ico
 *.log
 .snapsort_checkpoint.json
 

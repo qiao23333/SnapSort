@@ -5,7 +5,7 @@ setlocal
 cd /d "%~dp0.."
 
 echo ========================================
-echo   SnapSort Windows 打包脚本 (v2.3)
+echo   SnapSort Windows 打包脚本 (v3.6.0)
 echo ========================================
 echo.
 
@@ -32,11 +32,30 @@ call .\venv\Scripts\activate.bat
 REM 安装依赖
 echo.
 echo 📦 安装依赖...
-pip install -q -r requirements.txt
-pip install -q pyinstaller
-
+python -m pip install -q --upgrade pip
 if errorlevel 1 (
-    echo ❌ 依赖安装失败
+    echo ❌ pip 更新失败
+    pause
+    exit /b 1
+)
+
+python -m pip install -q -r requirements.txt
+if errorlevel 1 (
+    echo ❌ 程序依赖安装失败
+    pause
+    exit /b 1
+)
+
+python -m pip install -q pyinstaller
+if errorlevel 1 (
+    echo ❌ PyInstaller 安装失败
+    pause
+    exit /b 1
+)
+
+python -c "import customtkinter, requests, PIL, pillow_heif, openpyxl, tkinterdnd2"
+if errorlevel 1 (
+    echo ❌ 依赖校验失败，停止打包
     pause
     exit /b 1
 )
@@ -58,6 +77,12 @@ if errorlevel 1 (
     echo.
     echo ❌ 打包失败！
     echo 请检查上方错误信息
+    pause
+    exit /b 1
+)
+
+if not exist "dist\SnapSort\SnapSort.exe" (
+    echo ❌ 打包命令结束，但未找到 SnapSort.exe
     pause
     exit /b 1
 )

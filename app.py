@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-SnapSort 3.0 - 本地 AI 图片素材分类器
-Apple 风格桌面应用。侧栏导航：仪表盘、自动分类（含内容分类/事件整理双模式）、素材预览、工具、历史、设置。
-v3.0: 优化 — 双模式共享模型选择器、事件流程加确认步骤
-"""
+"""SnapSort — 本地 AI 图片素材分类器。"""
 import os
-import sys
 import platform
+import subprocess
+import sys
 from pathlib import Path
+from tkinter import messagebox
 
 import customtkinter as ctk
-from tkinter import messagebox
+from PIL import Image
 
 # 将项目根目录加入 sys.path
 project_root = Path(__file__).parent.resolve()
@@ -19,71 +17,119 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from core.config import ConfigManager
-from ui.theme import (COLORS, font_safe, apply_root_theme,
-                      sidebar_button_style, sidebar_button_active_style,
-                      secondary_button_style)
+from core.icon_manager import selected_icon_path
+from core.paths import desktop_dir, resource_path
+from core.version import __version__
 from ui.dashboard import DashboardPage
-from ui.auto_sort import AutoSortPage
-from ui.gallery import GalleryPage
-from ui.toolbox import ToolboxPage
-from ui.history_view import HistoryPage
-from ui.settings import SettingsPage
-
+from ui.theme import (
+    COLORS,
+    apply_root_theme,
+    font_safe,
+    secondary_button_style,
+    sidebar_button_active_style,
+    sidebar_button_style,
+)
 
 ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("dark-blue")
 
 
+def _set_windows_app_id():
+    """让 Windows 用 SnapSort 自己的任务栏分组与内嵌 EXE 图标。"""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Qiaoxin.SnapSort.Desktop"
+        )
+    except (AttributeError, OSError):
+        pass
+
+
 def get_default_input_dir():
     """获取默认输入目录：优先使用上次路径，否则为桌面"""
-    desktop = Path.home() / "Desktop"
+    desktop = desktop_dir()
     return str(desktop / "素材内容") if (desktop / "素材内容").exists() else str(desktop)
 
 
 def get_default_output_dir():
     """获取默认输出目录"""
-    desktop = Path.home() / "Desktop"
+    desktop = desktop_dir()
     return str(desktop / "素材内容_已分类")
+
+
+def _create_auto_sort_page(*args, **kwargs):
+    from ui.auto_sort import AutoSortPage
+    return AutoSortPage(*args, **kwargs)
+
+
+def _create_gallery_page(*args, **kwargs):
+    from ui.gallery import GalleryPage
+    return GalleryPage(*args, **kwargs)
+
+
+def _create_toolbox_page(*args, **kwargs):
+    from ui.toolbox import ToolboxPage
+    return ToolboxPage(*args, **kwargs)
+
+
+def _create_history_page(*args, **kwargs):
+    from ui.history_view import HistoryPage
+    return HistoryPage(*args, **kwargs)
+
+
+def _create_settings_page(*args, **kwargs):
+    from ui.settings import SettingsPage
+    return SettingsPage(*args, **kwargs)
 
 
 class SnapSortApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SnapSort 3.0")
-        self.root.geometry("1280x860")
-        self.root.minsize(1080, 720)
-
+        self.root.title(f"SnapSort {__version__}")
         self.config_manager = ConfigManager()
+        self.active_icon_path = selected_icon_path(self.config_manager)
 
         # 全局变量（路径）：从配置读取，无记录则使用默认桌面路径
-        default_input = self.config_manager.get("last_input", get_default_input_dir())
-        default_output = self.config_manager.get("last_output", get_default_output_dir())
+        default_input = self.config_manager.get("last_input") or get_default_input_dir()
+        default_output = self.config_manager.get("last_output") or get_default_output_dir()
         self.input_var = ctk.StringVar(value=default_input)
         self.output_var = ctk.StringVar(value=default_output)
 
         self.current_page = None
         self.pages = {}
+        self.page_factories = {}
         self.nav_buttons = {}
         self._task_running = False
 
         self._center_window()
         self._build_ui()
         self.show_page("dashboard")
+        self.root.after_idle(self._show_ready)
 
     def _center_window(self):
         self.root.update_idletasks()
-        w, h = 1280, 860
-        x = (self.root.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.root.winfo_screenheight() // 2) - (h // 2)
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        w = min(1280, max(760, screen_w - 80))
+        h = min(860, max(600, screen_h - 80))
+        w = min(w, screen_w)
+        h = min(h, screen_h)
+        self.root.minsize(min(900, w), min(640, h))
+        x = max(0, (screen_w - w) // 2)
+        y = max(0, (screen_h - h) // 2)
         self.root.geometry(f"{w}x{h}+{x}+{y}")
-        # 确保窗口在最前并正常显示（macOS 上有时需要主动提升）
+
+    def _show_ready(self):
+        """首帧完整渲染后再显示，避免 Windows 启动时先黑后白。"""
+        self.root.update_idletasks()
         self.root.deiconify()
         self.root.lift()
-        self.root.attributes('-topmost', True)
-        self.root.after(100, lambda: self.root.attributes('-topmost', False))
 
     def _build_ui(self):
-        apply_root_theme(self.root)
+        apply_root_theme(self.root, self.active_icon_path)
         self._setup_dnd()
 
         # 主容器
@@ -96,12 +142,23 @@ class SnapSortApp:
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
-        # Logo 区
+        # 品牌区：使用真实图标，不依赖各平台表现不一的彩色 Emoji。
         logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=80)
         logo_frame.pack(fill="x", padx=20, pady=(24, 16))
         logo_frame.pack_propagate(False)
-        ctk.CTkLabel(logo_frame, text="SnapSort", font=font_safe(24, "bold"),
-                     text_color=COLORS["text"]).pack(anchor="w")
+        brand_row = ctk.CTkFrame(logo_frame, fg_color="transparent")
+        brand_row.pack(fill="x", anchor="w")
+        try:
+            self.brand_icon = self._make_ctk_icon(self.active_icon_path, 34)
+            self.brand_icon_label = ctk.CTkLabel(
+                brand_row, text="", image=self.brand_icon, width=34, height=34)
+            self.brand_icon_label.pack(
+                side="left", padx=(0, 10))
+        except Exception:
+            self.brand_icon = None
+            self.brand_icon_label = None
+        ctk.CTkLabel(brand_row, text="SnapSort", font=font_safe(22, "bold"),
+                     text_color=COLORS["text"]).pack(side="left")
         # 副标题 — 点击 5 次打开开发者面板（彩蛋）
         # 用 CTkButton 伪装成普通文字标签，保证点击事件可靠触发
         self._dev_click_count = 0
@@ -112,7 +169,7 @@ class SnapSortApp:
                      fg_color=COLORS["sidebar"], hover_color=COLORS["hover"],
                      border_width=0, height=24, anchor="w",
                      command=self._on_dev_label_click)
-        self.dev_btn.pack(anchor="w")
+        self.dev_btn.pack(anchor="w", padx=(44 if self.brand_icon else 0, 0))
 
         # 导航按钮（macOS 风格侧边栏）
         nav_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
@@ -120,16 +177,16 @@ class SnapSortApp:
 
         self.nav_buttons = {}
         nav_items = [
-            ("dashboard", "📊", "仪表盘"),
-            ("auto_sort", "🚀", "自动分类"),
-            ("gallery", "🖼", "素材预览"),
-            ("toolbox", "🧰", "工具"),
-            ("history", "📜", "历史记录"),
-            ("settings", "⚙️", "设置"),
+            ("dashboard", "仪表盘"),
+            ("auto_sort", "自动分类"),
+            ("gallery", "素材预览"),
+            ("toolbox", "工具箱"),
+            ("history", "历史记录"),
+            ("settings", "设置"),
         ]
 
-        for page_key, icon, label in nav_items:
-            btn = ctk.CTkButton(nav_container, text=f" {icon}  {label}",
+        for page_key, label in nav_items:
+            btn = ctk.CTkButton(nav_container, text=f"  {label}",
                                 command=lambda k=page_key: self.show_page(k),
                                 **sidebar_button_style())
             btn.pack(fill="x", pady=(0, 6))
@@ -155,7 +212,7 @@ class SnapSortApp:
         ctk.CTkLabel(footer, text="本地 AI · 隐私安全",
                      font=font_safe(11, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w")
-        ctk.CTkLabel(footer, text="v3.2",
+        ctk.CTkLabel(footer, text=f"v{__version__}",
                      font=font_safe(11, "normal"),
                      text_color=COLORS["text_secondary"]).pack(anchor="w")
 
@@ -163,20 +220,42 @@ class SnapSortApp:
         self.content_frame = ctk.CTkFrame(self.container, fg_color=COLORS["bg"], corner_radius=0)
         self.content_frame.pack(side="left", fill="both", expand=True)
 
-        # 初始化各页面
-        self.pages["dashboard"] = DashboardPage(self.content_frame, self, fg_color=COLORS["bg"])
-        self.pages["auto_sort"] = AutoSortPage(self.content_frame, self, fg_color=COLORS["bg"])
-        self.pages["gallery"] = GalleryPage(self.content_frame, self, fg_color=COLORS["bg"])
-        self.pages["toolbox"] = ToolboxPage(self.content_frame, self, fg_color=COLORS["bg"])
-        self.pages["history"] = HistoryPage(self.content_frame, self, fg_color=COLORS["bg"])
-        self.pages["settings"] = SettingsPage(self.content_frame, self, fg_color=COLORS["bg"])
+        # 页面按首次访问创建。工具箱组件较多，延迟构建能明显缩短冷启动，
+        # 也避免用户只做一次分类时为不用的页面付出启动成本。
+        self.page_factories = {
+            "dashboard": DashboardPage,
+            "auto_sort": _create_auto_sort_page,
+            "gallery": _create_gallery_page,
+            "toolbox": _create_toolbox_page,
+            "history": _create_history_page,
+            "settings": _create_settings_page,
+        }
 
-        for page in self.pages.values():
-            page.pack_forget()
+    @staticmethod
+    def _make_ctk_icon(path, size):
+        with Image.open(path) as opened:
+            source = opened.convert("RGBA").copy()
+        return ctk.CTkImage(light_image=source, dark_image=source, size=(size, size))
+
+    def apply_icon_choice(self, preset, custom_path=""):
+        """保存并立即应用应用内图标选择。"""
+        icon_config = {"preset": preset, "custom_path": str(custom_path or "")}
+        self.config_manager.set("app_icon", icon_config)
+        self.active_icon_path = selected_icon_path(self.config_manager)
+        apply_root_theme(self.root, self.active_icon_path)
+        if self.brand_icon_label is not None:
+            self.brand_icon = self._make_ctk_icon(self.active_icon_path, 34)
+            self.brand_icon_label.configure(image=self.brand_icon)
+        return self.active_icon_path
 
     def show_page(self, page_key):
-        if page_key not in self.pages:
+        if page_key not in self.page_factories:
             return
+
+        if page_key not in self.pages:
+            page_class = self.page_factories[page_key]
+            self.pages[page_key] = page_class(
+                self.content_frame, self, fg_color=COLORS["bg"])
 
         if self.current_page:
             self.pages[self.current_page].pack_forget()
@@ -198,7 +277,7 @@ class SnapSortApp:
         """
         self._task_running = running
         if running:
-            self.task_indicator_label.configure(text=f"⚙ {label}...")
+            self.task_indicator_label.configure(text=f"{label}…")
             self.task_indicator_bar.set(0)
             self.task_indicator.pack(fill="x", padx=12, pady=(8, 0))
         else:
@@ -216,16 +295,16 @@ class SnapSortApp:
             if platform.system() == "Windows":
                 os.startfile(output_dir)
             elif platform.system() == "Darwin":
-                os.system(f'open "{output_dir}"')
+                subprocess.Popen(["open", output_dir])
             else:
-                os.system(f'xdg-open "{output_dir}"')
+                subprocess.Popen(["xdg-open", output_dir])
         else:
             messagebox.showwarning("文件夹不存在", f"输出文件夹尚未创建：\n{output_dir}")
 
     def _setup_dnd(self):
         """拖拽文件夹到窗口 → 设为素材输入路径（需 tkinterdnd2，未安装则静默跳过）"""
         try:
-            from tkinterdnd2 import TkinterDnD, DND_FILES
+            from tkinterdnd2 import DND_FILES, TkinterDnD
             from tkinterdnd2.TkinterDnD import DnDWrapper
             TkinterDnD._require(self.root)
             # 把 DnD 全部方法注入普通 Tk root（tkinterdnd2 默认只给自家 Tk 子类）
@@ -290,7 +369,7 @@ class SnapSortApp:
         frm = ctk.CTkScrollableFrame(win, fg_color=COLORS["bg"])
         frm.pack(fill="both", expand=True, padx=16, pady=16)
 
-        ctk.CTkLabel(frm, text="🔧 开发者面板", font=font_safe(20, "bold"),
+        ctk.CTkLabel(frm, text="开发者面板", font=font_safe(20, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", pady=(0, 8))
 
         sections = [
@@ -325,8 +404,8 @@ class SnapSortApp:
             ]),
             ("配色修改", [
                 "打开 ui/theme.py → 修改 COLORS 字典",
-                "primary = 主按钮颜色（默认纯黑 #1D1D1F）",
-                "accent = 琥珀色，仅用于 AI 状态/活跃标签",
+                "primary = 主按钮与导航颜色（默认 Apple 蓝 #0071E3）",
+                "accent = 琥珀色，仅用于 AI 状态",
                 "selected = 选中态背景色",
                 "改完即时生效，无需编译",
             ]),
@@ -365,7 +444,7 @@ class SnapSortApp:
                 ctk.CTkLabel(frm, text=item, font=font_safe(12),
                              text_color=COLORS["text_secondary"]).pack(anchor="w", padx=12)
 
-        ctk.CTkLabel(frm, text=f"\n乔心制作 · v3.0 · {pf.system()}",
+        ctk.CTkLabel(frm, text=f"\n乔心制作 · v{__version__} · {pf.system()}",
                      font=font_safe(11), text_color=COLORS["text_secondary"]).pack(anchor="w", pady=(12, 0))
         ctk.CTkButton(frm, text="关闭", command=win.destroy,
                       **secondary_button_style()).pack(anchor="w", pady=(8, 0))
@@ -385,7 +464,11 @@ def main():
     log = get_logger()
     log.info("SnapSort 启动")
     try:
+        _set_windows_app_id()
         root = ctk.CTk()
+        # CTk 根窗口默认会立即映射；在组件主题尚未应用时可能短暂显示黑色。
+        # 先隐藏，待完整首帧构建后由 SnapSortApp._show_ready() 一次性显示。
+        root.withdraw()
         app = SnapSortApp(root)
         root.protocol("WM_DELETE_WINDOW", lambda: _quit(root, app))
         root.mainloop()

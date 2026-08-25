@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """设置页面：分类配置、规则引擎、模型管理、输出选项"""
-import os
 import json
+import os
 import threading
+from importlib.util import find_spec
+from tkinter import filedialog, messagebox
+
 import customtkinter as ctk
-from tkinter import messagebox, filedialog
-
 import requests
+from PIL import Image
 
-from ui.theme import COLORS, font_safe, primary_button_style, secondary_button_style, card_frame_style
-from core.sorter_engine import fetch_all_models, DEFAULT_URL, ensure_model
-from core.model_info import get_model_hint, get_model_role_tag
 from core import reference_manager as ref_mgr
+from core.icon_manager import install_custom_icon
+from core.model_info import get_model_hint, get_model_role_tag
+from core.sorter_engine import DEFAULT_URL, fetch_all_models
+from ui.theme import (
+    COLORS,
+    card_frame_style,
+    font_safe,
+    primary_button_style,
+    secondary_button_style,
+)
 
 
 class SettingsPage(ctk.CTkFrame):
@@ -22,7 +31,6 @@ class SettingsPage(ctk.CTkFrame):
         self.configure(fg_color=COLORS["bg"])
         self.category_widgets = []
         self._build_ui()
-        self._refresh_installed_models()
 
     def _build_ui(self):
         ctk.CTkLabel(self, text="设置", font=font_safe(28, "bold"),
@@ -37,24 +45,43 @@ class SettingsPage(ctk.CTkFrame):
 
         # ── 1. 分类配置 ──
         self._build_category_section()
-        # ── 2. 已知人物 ──
-        self._build_person_section()
-        # ── 3. 已知地点 ──
-        self._build_place_section()
-        # ── 4. 规则引擎 ──
-        self._build_rule_section()
-        # ── 5. 模型管理 ──
-        self._build_model_section()
-        # ── 6. 输出选项 ──
-        self._build_output_section()
 
         # 保存按钮（浮动在底部）
         save_bar = ctk.CTkFrame(self, fg_color=COLORS["card"], height=52,
                                 corner_radius=0)
         save_bar.pack(fill="x", side="bottom")
         save_bar.pack_propagate(False)
-        ctk.CTkButton(save_bar, text="💾 保存全部设置", command=self._save_all,
-                      width=180, **primary_button_style()).pack(side="right", padx=32, pady=10)
+        self.save_all_btn = ctk.CTkButton(
+            save_bar, text="正在载入设置…", command=self._save_all,
+            width=180, state="disabled", **primary_button_style())
+        self.save_all_btn.pack(side="right", padx=32, pady=10)
+
+        # 首屏先交还给 Tk 渲染；首屏以下的卡片分批补齐，避免点击“设置”后
+        # 主线程连续创建数百个组件而显得卡住。布局和功能保持不变。
+        self._deferred_sections = iter([
+            self._build_person_section,
+            self._build_place_section,
+            self._build_target_section,
+            self._build_rule_section,
+            self._build_model_section,
+            self._build_appearance_section,
+            self._build_output_section,
+        ])
+        self.after(10, self._build_next_deferred_section)
+
+    def _build_next_deferred_section(self):
+        if not self.winfo_exists():
+            return
+        try:
+            builder = next(self._deferred_sections)
+        except StopIteration:
+            self.save_all_btn.configure(text="保存全部设置", state="normal")
+            return
+
+        builder()
+        if builder.__name__ == "_build_model_section":
+            self._refresh_installed_models()
+        self.after(10, self._build_next_deferred_section)
 
     # ── 分类配置 ──
     def _build_category_section(self):
@@ -63,9 +90,9 @@ class SettingsPage(ctk.CTkFrame):
 
         hdr = ctk.CTkFrame(card, fg_color="transparent")
         hdr.pack(fill="x", padx=24, pady=(20, 12))
-        ctk.CTkLabel(hdr, text="📂 分类配置", font=font_safe(18, "bold"),
+        ctk.CTkLabel(hdr, text="分类配置", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(side="left")
-        ctk.CTkButton(hdr, text="➕ 添加分类", command=self._add_category,
+        ctk.CTkButton(hdr, text="添加分类", command=self._add_category,
                       **secondary_button_style()).pack(side="right")
 
         self.cat_list = ctk.CTkFrame(card, fg_color="transparent")
@@ -120,9 +147,9 @@ class SettingsPage(ctk.CTkFrame):
 
         hdr = ctk.CTkFrame(card, fg_color="transparent")
         hdr.pack(fill="x", padx=24, pady=(20, 8))
-        ctk.CTkLabel(hdr, text="👤 已知人物", font=font_safe(18, "bold"),
+        ctk.CTkLabel(hdr, text="已知人物", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(side="left")
-        ctk.CTkButton(hdr, text="➕ 添加人物", command=self._add_person_dialog,
+        ctk.CTkButton(hdr, text="添加人物", command=self._add_person_dialog,
                       **secondary_button_style()).pack(side="right")
 
         desc = ctk.CTkLabel(card,
@@ -208,7 +235,7 @@ class SettingsPage(ctk.CTkFrame):
 
         ctk.CTkLabel(frm, text="人物姓名", font=font_safe(13, "bold")).pack(anchor="w")
         name_entry = ctk.CTkEntry(frm, font=font_safe(13), fg_color="white",
-                                  placeholder_text="如：张总 / 王负责人 / 李工")
+                                  placeholder_text="如：小王 / 同事甲 / 家人")
         name_entry.insert(0, old_name)
         name_entry.pack(fill="x", pady=(4, 12))
 
@@ -225,7 +252,7 @@ class SettingsPage(ctk.CTkFrame):
 
         ctk.CTkLabel(frm, text="备注关键词（可选，逗号分隔，辅助匹配）", font=font_safe(13, "bold")).pack(anchor="w", pady=(8, 0))
         kw_entry = ctk.CTkEntry(frm, font=font_safe(13), fg_color="white",
-                                placeholder_text="如：负责人,创始人,张总")
+                                placeholder_text="如：同事,朋友,家人")
         kw_entry.insert(0, existing.get("keywords", ""))
         kw_entry.pack(fill="x", pady=(4, 12))
 
@@ -271,9 +298,9 @@ class SettingsPage(ctk.CTkFrame):
 
         hdr = ctk.CTkFrame(card, fg_color="transparent")
         hdr.pack(fill="x", padx=24, pady=(20, 8))
-        ctk.CTkLabel(hdr, text="📍 已知地点", font=font_safe(18, "bold"),
+        ctk.CTkLabel(hdr, text="已知地点", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(side="left")
-        ctk.CTkButton(hdr, text="➕ 添加地点", command=self._add_place_dialog,
+        ctk.CTkButton(hdr, text="添加地点", command=self._add_place_dialog,
                       **secondary_button_style()).pack(side="right")
 
         desc = ctk.CTkLabel(card,
@@ -404,6 +431,168 @@ class SettingsPage(ctk.CTkFrame):
                 self.app.config_manager.set("known_places", places)
                 self._render_places()
 
+    # ── 通用识别目标（物品/场景/动作/任意自定义概念）──
+    def _build_target_section(self):
+        card = ctk.CTkFrame(self.scroll_frame, **card_frame_style())
+        card.pack(fill="x", padx=32, pady=(8, 16))
+
+        hdr = ctk.CTkFrame(card, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(20, 6))
+        ctk.CTkLabel(
+            hdr, text="已知对象", font=font_safe(18, "bold"),
+            text_color=COLORS["text"],
+        ).pack(side="left")
+        ctk.CTkButton(
+            hdr, text="添加目标", command=self._add_target_dialog,
+            **secondary_button_style(),
+        ).pack(side="right")
+
+        ctk.CTkLabel(
+            card,
+            text="像教 AI 认识人物一样教它认识具体物品：填写名称和描述，并提供 1–5 张参考照片；分类和搜图都会按这个具体对象匹配。",
+            font=font_safe(12), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=24, pady=(0, 8))
+        self.target_recognition_var = ctk.BooleanVar(
+            value=self.app.config_manager.get("recognition_targets_enabled", True))
+        ctk.CTkCheckBox(
+            card, text="分类时识别这些目标", variable=self.target_recognition_var,
+            font=font_safe(13), text_color=COLORS["text"],
+            fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
+        ).pack(anchor="w", padx=24, pady=(0, 10))
+
+        self.target_list = ctk.CTkFrame(card, fg_color="transparent")
+        self.target_list.pack(fill="x", padx=24, pady=(0, 20))
+        self._render_targets()
+
+    def _render_targets(self):
+        for widget in self.target_list.winfo_children():
+            widget.destroy()
+        targets = self.app.config_manager.get("recognition_targets", []) or []
+        if not targets:
+            ctk.CTkLabel(
+                self.target_list, text="暂无目标，添加后可用于自动识别和以文搜图",
+                font=font_safe(12), text_color=COLORS["text_secondary"],
+            ).pack(pady=8)
+            return
+
+        for idx, target in enumerate(targets):
+            row = ctk.CTkFrame(self.target_list, fg_color=COLORS["bg"], corner_radius=8, height=48)
+            row.pack(fill="x", pady=(0, 7))
+            row.pack_propagate(False)
+            state_text = "启用" if target.get("enabled", True) else "停用"
+            ref_count = ref_mgr.count_reference_images(
+                "target", str(target.get("name", "")))
+            ctk.CTkLabel(
+                row, text=str(target.get("type", "自定义")), width=64,
+                font=font_safe(11, "bold"), text_color=COLORS["primary"],
+            ).pack(side="left", padx=(12, 4))
+            ctk.CTkLabel(
+                row, text=str(target.get("name", "")), width=120,
+                font=font_safe(13, "bold"), text_color=COLORS["text"], anchor="w",
+            ).pack(side="left", padx=(0, 8))
+            if ref_count:
+                ctk.CTkLabel(
+                    row, text=f"参考图 {ref_count}", width=58,
+                    font=font_safe(10, "bold"), text_color=COLORS["primary"],
+                ).pack(side="left", padx=(0, 8))
+            summary = target.get("search_query") or target.get("description") or ""
+            ctk.CTkLabel(
+                row, text=str(summary)[:55], font=font_safe(11),
+                text_color=COLORS["text_secondary"], anchor="w",
+            ).pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                row, text=state_text, width=42, font=font_safe(10),
+                text_color=COLORS["success"] if state_text == "启用" else COLORS["text_secondary"],
+            ).pack(side="left", padx=(4, 4))
+            edit_btn = ctk.CTkButton(
+                row, text="编辑", command=lambda i=idx: self._edit_target_dialog(i),
+                **secondary_button_style(),
+            )
+            edit_btn.configure(width=52, height=27)
+            edit_btn.pack(side="left", padx=(0, 6))
+            ctk.CTkButton(
+                row, text="删除", width=52, height=27,
+                command=lambda i=idx: self._delete_target(i),
+                fg_color=COLORS["danger"], hover_color="#E6352B",
+                text_color="white", font=font_safe(11),
+            ).pack(side="left", padx=(0, 10))
+
+    def _add_target_dialog(self):
+        self._edit_target_dialog(None)
+
+    def _edit_target_dialog(self, idx):
+        targets = self.app.config_manager.get("recognition_targets", []) or []
+        existing = targets[idx] if idx is not None and idx < len(targets) else {}
+        old_name = str(existing.get("name", ""))
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("编辑识别目标" if existing else "添加识别目标")
+        dialog.geometry("580x700")
+        dialog.transient(self.app.root)
+        dialog.grab_set()
+        frm = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        frm.pack(fill="both", expand=True, padx=24, pady=20)
+
+        def entry_field(label, value="", placeholder=""):
+            ctk.CTkLabel(frm, text=label, font=font_safe(13, "bold")).pack(
+                anchor="w", pady=(8, 3))
+            entry = ctk.CTkEntry(frm, height=36, font=font_safe(13),
+                                 placeholder_text=placeholder)
+            entry.insert(0, str(value or ""))
+            entry.pack(fill="x")
+            return entry
+
+        name_entry = entry_field("目标名称", existing.get("name"), "如：红色包装、会议签约、公司 Logo")
+        type_entry = entry_field("目标类型", existing.get("type", "物品"), "物品 / 场景 / 动作 / 自定义")
+        desc_entry = entry_field("识别说明", existing.get("description"), "告诉 AI 画面符合什么条件时算命中")
+        ref_state = self._build_ref_photo_area(frm, "target", old_name)
+        search_entry = entry_field(
+            "文字补充（可选）", existing.get("search_query"),
+            "参考图不够明确时，用一句话补充颜色、形状或用途",
+        )
+        enabled_var = ctk.BooleanVar(value=existing.get("enabled", True))
+        ctk.CTkCheckBox(
+            frm, text="启用此目标", variable=enabled_var, font=font_safe(13),
+            fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
+        ).pack(anchor="w", pady=(14, 10))
+
+        def save_target():
+            name = name_entry.get().strip()
+            if not name:
+                messagebox.showwarning("名称不能为空", "请输入目标名称", parent=dialog)
+                return
+            target = {
+                "name": name,
+                "type": type_entry.get().strip() or "自定义",
+                "description": desc_entry.get().strip(),
+                "search_query": search_entry.get().strip() or desc_entry.get().strip() or name,
+                "enabled": enabled_var.get(),
+            }
+            current = self.app.config_manager.get("recognition_targets", []) or []
+            if idx is None:
+                current.append(target)
+            else:
+                current[idx] = target
+            self.app.config_manager.set("recognition_targets", current)
+            self._save_ref_photos(ref_state, "target", old_name, name)
+            self._render_targets()
+            dialog.destroy()
+
+        ctk.CTkButton(
+            frm, text="保存目标", command=save_target, **primary_button_style(),
+        ).pack(anchor="e", pady=(8, 0))
+
+    def _delete_target(self, idx):
+        targets = self.app.config_manager.get("recognition_targets", []) or []
+        if idx >= len(targets):
+            return
+        name = targets[idx].get("name", "")
+        if messagebox.askyesno("确认删除", f"删除识别目标「{name}」？"):
+            if name:
+                ref_mgr.delete_reference_images("target", name)
+            del targets[idx]
+            self.app.config_manager.set("recognition_targets", targets)
+            self._render_targets()
+
     # ── 参考照片 UI（人物/地点共用）──
     def _build_ref_photo_area(self, parent, ref_type, entity_name):
         """构建参考照片选择 UI，返回状态字典。"""
@@ -413,9 +602,11 @@ class SettingsPage(ctk.CTkFrame):
             "removed": set(),
         }
 
-        ctk.CTkLabel(parent, text="📷 参考照片（给几张照片，让 AI 视觉比对识别）",
+        entity_label = {"person": "人", "place": "地点", "target": "具体对象"}.get(
+            ref_type, "对象")
+        ctk.CTkLabel(parent, text="参考照片（给几张照片，让 AI 视觉比对识别）",
                      font=font_safe(13, "bold")).pack(anchor="w", pady=(8, 2))
-        ctk.CTkLabel(parent, text=f"选 1-{ref_mgr.MAX_REF_IMAGES} 张这个{'人' if ref_type == 'person' else '地点'}的照片，"
+        ctk.CTkLabel(parent, text=f"选 1-{ref_mgr.MAX_REF_IMAGES} 张这个{entity_label}的照片，"
                                  "分类时 AI 会对比参考照片来精准识别",
                      font=font_safe(11), text_color=COLORS["text_secondary"]).pack(anchor="w")
 
@@ -427,7 +618,7 @@ class SettingsPage(ctk.CTkFrame):
         btn_row.pack(fill="x", pady=(0, 4))
         _photo_btn = secondary_button_style()
         _photo_btn.update({"width": 120, "height": 30})
-        ctk.CTkButton(btn_row, text="📷 选择照片",
+        ctk.CTkButton(btn_row, text="选择照片",
                       command=lambda: self._select_ref_photos(state, ref_type),
                       **_photo_btn).pack(side="left")
 
@@ -505,9 +696,9 @@ class SettingsPage(ctk.CTkFrame):
 
         hdr = ctk.CTkFrame(card, fg_color="transparent")
         hdr.pack(fill="x", padx=24, pady=(20, 12))
-        ctk.CTkLabel(hdr, text="🔧 规则引擎", font=font_safe(18, "bold"),
+        ctk.CTkLabel(hdr, text="规则引擎", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(side="left")
-        ctk.CTkButton(hdr, text="➕ 添加规则", command=self._add_rule_dialog,
+        ctk.CTkButton(hdr, text="添加规则", command=self._add_rule_dialog,
                       **secondary_button_style()).pack(side="right")
 
         desc = ctk.CTkLabel(card, text="分类完成后自动执行规则。例如：IF 分类==截图 AND 包含'微信' THEN 移动到 WeChat_Screenshots",
@@ -673,9 +864,9 @@ class SettingsPage(ctk.CTkFrame):
 
         hdr = ctk.CTkFrame(card, fg_color="transparent")
         hdr.pack(fill="x", padx=24, pady=(20, 12))
-        ctk.CTkLabel(hdr, text="🤖 模型管理", font=font_safe(18, "bold"),
+        ctk.CTkLabel(hdr, text="模型管理", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(side="left")
-        ctk.CTkButton(hdr, text="🔄 刷新", command=self._refresh_installed_models,
+        ctk.CTkButton(hdr, text="刷新", command=self._refresh_installed_models,
                       **secondary_button_style()).pack(side="right")
 
         # 模型下载区
@@ -708,7 +899,7 @@ class SettingsPage(ctk.CTkFrame):
         rec_hdr.pack(fill="x", padx=12, pady=(10, 6))
         ctk.CTkLabel(rec_hdr, text="推荐模型", font=font_safe(13, "bold"),
                      text_color=COLORS["text"]).pack(side="left")
-        ctk.CTkButton(rec_hdr, text="🔍 检测本地模型", width=120, height=26,
+        ctk.CTkButton(rec_hdr, text="检测本地模型", width=120, height=26,
                       command=self._detect_local_models,
                       font=font_safe(11),
                       corner_radius=12,
@@ -869,8 +1060,11 @@ class SettingsPage(ctk.CTkFrame):
                                 if total:
                                     pct = completed / total
                                     self.app.root.after(0, lambda p=pct: self.model_dl_progress.set(p))
-                                    self.app.root.after(0, lambda s=status:
-                                        self.model_dl_status_var.set(f"{s} ({completed}/{total})"))
+                                    self.app.root.after(
+                                        0,
+                                        lambda s=status, c=completed, t=total:
+                                        self.model_dl_status_var.set(f"{s} ({c}/{t})"),
+                                    )
                             elif status:
                                 self.app.root.after(0, lambda s=status:
                                     self.model_dl_status_var.set(s))
@@ -879,7 +1073,7 @@ class SettingsPage(ctk.CTkFrame):
 
                 self.app.root.after(0, lambda: self._on_model_downloaded(True, model_name))
             except Exception as e:
-                self.app.root.after(0, lambda: self._on_model_downloaded(False, str(e)))
+                self.app.root.after(0, lambda error=e: self._on_model_downloaded(False, str(error)))
 
         threading.Thread(target=_dl, daemon=True).start()
 
@@ -932,8 +1126,8 @@ class SettingsPage(ctk.CTkFrame):
                             f"pip install 失败：\n{result.stderr[:500]}")
                 self.app.root.after(0, _done)
             except Exception as e:
-                self.app.root.after(0, lambda:
-                    messagebox.showerror("安装失败", str(e)))
+                self.app.root.after(0, lambda error=e:
+                    messagebox.showerror("安装失败", str(error)))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -980,16 +1174,14 @@ class SettingsPage(ctk.CTkFrame):
                 results.append(("GGUF 模型文件", ["未找到"]))
 
             # 3. 检查增强组件
-            try:
-                import sentence_transformers
+            if find_spec("sentence_transformers") is not None:
                 results.append(("CLIP 语义搜索", ["已安装"]))
-            except ImportError:
+            else:
                 results.append(("CLIP 语义搜索", ["未安装"]))
 
-            try:
-                import vtracer
+            if find_spec("vtracer") is not None:
                 results.append(("VTracer 矢量引擎", ["已安装"]))
-            except ImportError:
+            else:
                 results.append(("VTracer 矢量引擎", ["未安装"]))
 
             def _show():
@@ -1035,12 +1227,106 @@ class SettingsPage(ctk.CTkFrame):
         except Exception as e:
             messagebox.showerror("错误", str(e))
 
+    # ── 外观与图标 ──
+    def _build_appearance_section(self):
+        card = ctk.CTkFrame(self.scroll_frame, **card_frame_style())
+        card.pack(fill="x", padx=32, pady=(8, 16))
+
+        ctk.CTkLabel(card, text="外观与图标", font=font_safe(18, "bold"),
+                     text_color=COLORS["text"]).pack(anchor="w", padx=24, pady=(20, 4))
+        ctk.CTkLabel(
+            card,
+            text="应用内图标会立即更新；已固定的 Windows 快捷方式需重新固定或重新打包。",
+            font=font_safe(12), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=24, pady=(0, 14))
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=24, pady=(0, 20))
+        self.icon_preview = ctk.CTkLabel(row, text="", width=56, height=56)
+        self.icon_preview.pack(side="left", padx=(0, 16))
+
+        controls = ctk.CTkFrame(row, fg_color="transparent")
+        controls.pack(side="left", fill="x", expand=True)
+        current = self.app.config_manager.get("app_icon", {}) or {}
+        preset_labels = {"direct": "清晰分拣", "minimal": "极简分流", "custom": "自定义"}
+        self.icon_preset_var = ctk.StringVar(
+            value=preset_labels.get(current.get("preset", "direct"), "清晰分拣"))
+        ctk.CTkSegmentedButton(
+            controls,
+            values=["清晰分拣", "极简分流", "自定义"],
+            width=320,
+            height=34,
+            variable=self.icon_preset_var,
+            command=self._on_icon_preset,
+            selected_color=COLORS["action"],
+            selected_hover_color=COLORS["action_hover"],
+            unselected_color=COLORS["card"],
+            unselected_hover_color=COLORS["hover"],
+            font=font_safe(12),
+        ).pack(anchor="w")
+
+        btn_row = ctk.CTkFrame(controls, fg_color="transparent")
+        btn_row.pack(anchor="w", pady=(10, 0))
+        ctk.CTkButton(
+            btn_row, text="导入自定义图标", command=self._choose_custom_icon,
+            **secondary_button_style(),
+        ).pack(side="left")
+        self.icon_status = ctk.CTkLabel(
+            btn_row, text="", font=font_safe(11), text_color=COLORS["text_secondary"])
+        self.icon_status.pack(side="left", padx=(10, 0))
+        self._refresh_icon_preview()
+
+    def _refresh_icon_preview(self):
+        try:
+            with Image.open(self.app.active_icon_path) as opened:
+                source = opened.convert("RGBA").copy()
+            self._icon_preview_image = ctk.CTkImage(
+                light_image=source, dark_image=source, size=(52, 52))
+            self.icon_preview.configure(image=self._icon_preview_image)
+            self.icon_status.configure(text=self.app.active_icon_path.name)
+        except (OSError, ValueError):
+            self.icon_status.configure(text="图标不可用，已回退默认")
+
+    def _on_icon_preset(self, label):
+        preset_map = {"清晰分拣": "direct", "极简分流": "minimal"}
+        if label == "自定义":
+            current = self.app.config_manager.get("app_icon", {}) or {}
+            custom = current.get("custom_path", "")
+            if not custom or not os.path.isfile(custom):
+                self._choose_custom_icon()
+                return
+            self.app.apply_icon_choice("custom", custom)
+        else:
+            self.app.apply_icon_choice(preset_map[label])
+        self._refresh_icon_preview()
+
+    def _choose_custom_icon(self):
+        path = filedialog.askopenfilename(
+            title="选择应用图标",
+            filetypes=[
+                ("图片或图标", "*.png *.webp *.jpg *.jpeg *.ico"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not path:
+            current = self.app.config_manager.get("app_icon", {}) or {}
+            labels = {"direct": "清晰分拣", "minimal": "极简分流", "custom": "自定义"}
+            self.icon_preset_var.set(labels.get(current.get("preset"), "清晰分拣"))
+            return
+        try:
+            installed_png, _ = install_custom_icon(path)
+            self.app.apply_icon_choice("custom", installed_png)
+            self.icon_preset_var.set("自定义")
+            self._refresh_icon_preview()
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("图标导入失败", str(exc))
+
     # ── 输出选项 ──
     def _build_output_section(self):
         card = ctk.CTkFrame(self.scroll_frame, **card_frame_style())
         card.pack(fill="x", padx=32, pady=(8, 16))
 
-        ctk.CTkLabel(card, text="⚙️ 输出选项", font=font_safe(18, "bold"),
+        ctk.CTkLabel(card, text="输出选项", font=font_safe(18, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", padx=24, pady=(20, 12))
 
         out_cfg = self.app.config_manager.get("output", {})
@@ -1110,6 +1396,10 @@ class SettingsPage(ctk.CTkFrame):
 
         # 地点识别开关（known_places 在添加/编辑时已保存）
         self.app.config_manager.set("place_recognition", self.place_recog_var.get())
+
+        # 通用识别目标列表在添加/编辑时保存；这里只保存总开关
+        self.app.config_manager.set(
+            "recognition_targets_enabled", self.target_recognition_var.get())
 
         # 规则已在添加/编辑时保存
 

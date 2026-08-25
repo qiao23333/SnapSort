@@ -5,17 +5,17 @@
 
 v3.0 重写：Checkpoint / Analyzer / Renamer 各自独立，Pipeline 串联。
 """
-import os
 import json
+import os
 import re
 import shutil
-from datetime import datetime
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 import requests
 
-from .image_utils import is_image_file, encode_image, _safe_open_image, _cleanup_temp
+from .image_utils import _cleanup_temp, _safe_open_image, encode_image, is_image_file
 
 OLLAMA = "http://localhost:11434"
 
@@ -37,7 +37,7 @@ class Checkpoint:
         if not os.path.exists(p):
             return set()
         try:
-            with open(p, "r") as f:
+            with open(p, "r", encoding="utf-8") as f:
                 return set(json.load(f).get("dates", []))
         except Exception:
             return set()
@@ -46,11 +46,16 @@ class Checkpoint:
     def save(output_dir, dates):
         p = Checkpoint.path(output_dir)
         os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = p + ".tmp"
         try:
-            with open(p, "w") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"dates": sorted(dates)}, f, ensure_ascii=False)
-        except Exception:
-            pass
+            os.replace(tmp, p)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     @staticmethod
     def clear(output_dir):
@@ -373,7 +378,8 @@ class BatchRenamer:
         safe_ev = re.sub(r'[\\/:*?"<>|]', '', event)[:20]
         safe_ds = re.sub(r'[\\/:*?"<>|]', '', desc)[:15].replace(" ", "_")
         # 多标签：用 - 连接
-        tags_str = "-".join(tags) if tags else grade
+        tags_str = "-".join(str(tag) for tag in tags) if tags else str(grade)
+        tags_str = re.sub(r'[\\/:*?"<>|]', "_", tags_str).strip(" .")[:30]
 
         if pattern:
             name = pattern

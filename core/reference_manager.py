@@ -1,39 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""参考照片管理：存储和检索人物/地点的参考照片
+"""参考照片管理：存储和检索人物、地点和自定义对象的参考照片
 
 目录结构:
-  data/ref_images/
+  用户数据目录/ref_images/
     person/
-      张总/
+      示例人物/
         ref_0001.jpg
         ref_0002.jpg
     place/
-      工厂A/
+      示例地点/
+        ref_0001.jpg
+    target/
+      示例物品/
         ref_0001.jpg
 """
 import os
 import shutil
 from pathlib import Path
 
-# 每个人物/地点最多保存的参考照片数
-MAX_REF_IMAGES = 5
-# 每次分类调用时，每个人物/地点最多发送的参考照片数
-MAX_REF_PER_CALL = 2
+from core.paths import user_data_dir
 
-_ROOT = Path(__file__).parent.parent / "data" / "ref_images"
+# 每个人物/地点/对象最多保存的参考照片数
+MAX_REF_IMAGES = 5
+# 每次分类调用时，每个实体最多发送的参考照片数
+MAX_REF_PER_CALL = 2
+# 单次视觉模型请求的参考图总预算。过多图片会明显增加编码、传输和推理时间。
+MAX_TOTAL_REF_PER_CALL = 8
+
+_ROOT = user_data_dir() / "ref_images"
 
 
 def _type_dir(ref_type: str) -> Path:
-    """ref_type: 'person' 或 'place'"""
+    """ref_type: 'person'、'place' 或 'target'"""
+    if ref_type not in {"person", "place", "target"}:
+        raise ValueError("ref_type 必须是 person、place 或 target")
     d = _ROOT / ref_type
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _entity_dir(ref_type: str, name: str) -> Path:
-    """获取某个人物/地点的参考照片目录"""
+    """获取某个人物、地点或对象的参考照片目录"""
     safe_name = _sanitize_name(name)
+    if not safe_name:
+        raise ValueError("人物、地点或对象名称不能为空")
     return _type_dir(ref_type) / safe_name
 
 
@@ -49,14 +60,14 @@ def save_reference_images(ref_type: str, name: str, source_paths: list) -> list:
     """将源照片复制到参考照片目录。
 
     Args:
-        ref_type: 'person' 或 'place'
-        name: 人物名或地点名
+        ref_type: 'person'、'place' 或 'target'
+        name: 人物名、地点名或对象名
         source_paths: 源图片路径列表
 
     Returns:
         保存后的完整路径列表
     """
-    if not name or not source_paths:
+    if not name or not name.strip() or not source_paths:
         return []
 
     dest_dir = _entity_dir(ref_type, name)
@@ -84,7 +95,7 @@ def save_reference_images(ref_type: str, name: str, source_paths: list) -> list:
 
 
 def get_reference_images(ref_type: str, name: str) -> list:
-    """获取某个人物/地点的所有参考照片路径"""
+    """获取某个人物、地点或对象的所有参考照片路径"""
     d = _entity_dir(ref_type, name)
     if not d.exists():
         return []
@@ -92,13 +103,13 @@ def get_reference_images(ref_type: str, name: str) -> list:
 
 
 def get_reference_images_for_call(ref_type: str, name: str) -> list:
-    """获取用于 API 调用的参考照片（限制数量）"""
+    """获取用于 API 调用的参考照片（限制单个实体数量）"""
     all_imgs = get_reference_images(ref_type, name)
     return all_imgs[:MAX_REF_PER_CALL]
 
 
 def delete_reference_images(ref_type: str, name: str):
-    """删除某个人物/地点的所有参考照片"""
+    """删除某个人物、地点或对象的所有参考照片"""
     d = _entity_dir(ref_type, name)
     if d.exists():
         shutil.rmtree(str(d), ignore_errors=True)
@@ -113,7 +124,7 @@ def delete_single_reference(ref_type: str, name: str, filename: str):
 
 
 def rename_reference_dir(ref_type: str, old_name: str, new_name: str):
-    """重命名人物/地点时，同步重命名参考照片目录"""
+    """重命名人物、地点或对象时，同步重命名参考照片目录"""
     old_dir = _entity_dir(ref_type, old_name)
     new_dir = _entity_dir(ref_type, new_name)
     if old_dir.exists() and old_dir != new_dir:

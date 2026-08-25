@@ -4,13 +4,21 @@
 import os
 import threading
 from datetime import datetime, timedelta
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
-from tkinter import filedialog
 
-from ui.theme import COLORS, font_safe, primary_button_style, secondary_button_style, card_frame_style
+from core.image_utils import format_size, image_count_and_size
+from core.paths import desktop_dir
+from core.portfolio import export_portfolio_snapshot
+from ui.theme import (
+    COLORS,
+    card_frame_style,
+    font_safe,
+    primary_button_style,
+    secondary_button_style,
+)
 from ui.widgets import StatCard, safe_after
-from core.image_utils import image_count_and_size, format_size
 
 
 def _greeting():
@@ -52,9 +60,9 @@ class DashboardPage(ctk.CTkFrame):
 
         # AI 状态胶囊（在线→管理模型，离线→弹出安装向导）
         self.ai_pill = ctk.CTkButton(
-            header, text="● AI 检测中…", width=150, height=32, corner_radius=16,
-            fg_color=COLORS["border"], hover_color=COLORS["hover"],
-            text_color=COLORS["text"], font=font_safe(12, "bold"),
+            header, text="AI 检测中…", width=150, height=32, corner_radius=16,
+            fg_color=COLORS["accent_light"], hover_color=COLORS["accent_light"],
+            text_color=COLORS["accent"], font=font_safe(12, "bold"),
             command=self._on_ai_pill_click)
         self.ai_pill.pack(side="right", pady=(8, 0))
 
@@ -72,12 +80,12 @@ class DashboardPage(ctk.CTkFrame):
 
         btns = ctk.CTkFrame(hero_left, fg_color="transparent")
         btns.pack(anchor="w")
-        ctk.CTkButton(btns, text="🚀 开始整理素材",
+        ctk.CTkButton(btns, text="开始整理素材",
                       command=lambda: self.app.show_page("auto_sort"),
                       **primary_button_style()).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btns, text="🗂 选素材文件夹", command=self._choose_input,
+        ctk.CTkButton(btns, text="选择素材文件夹", command=self._choose_input,
                       **secondary_button_style()).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btns, text="📂 打开输出",
+        ctk.CTkButton(btns, text="打开输出文件夹",
                       command=self.app.open_output_folder,
                       **secondary_button_style()).pack(side="left")
 
@@ -96,19 +104,19 @@ class DashboardPage(ctk.CTkFrame):
         cards_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.stat_total = StatCard(cards_frame, title="累计处理", value="0", subtitle="张图片",
-                                   icon="📊", width=200, height=120)
+                                   icon="累计", width=200, height=120)
         self.stat_total.grid(row=0, column=0, padx=(0, 14), sticky="nsew")
 
         self.stat_tasks = StatCard(cards_frame, title="分类任务", value="0", subtitle="次",
-                                   icon="🚀", width=200, height=120)
+                                   icon="任务", width=200, height=120)
         self.stat_tasks.grid(row=0, column=1, padx=(0, 14), sticky="nsew")
 
         self.stat_input = StatCard(cards_frame, title="素材文件夹", value="0", subtitle="张待处理",
-                                   icon="🗂", width=200, height=120)
+                                   icon="待理", width=200, height=120)
         self.stat_input.grid(row=0, column=2, padx=(0, 14), sticky="nsew")
 
         self.stat_output = StatCard(cards_frame, title="输出文件夹", value="0", subtitle="张已分类",
-                                    icon="✅", width=200, height=120)
+                                    icon="已理", width=200, height=120)
         self.stat_output.grid(row=0, column=3, sticky="nsew")
 
         # ── 最近任务区 ──
@@ -123,6 +131,12 @@ class DashboardPage(ctk.CTkFrame):
                       fg_color="transparent", hover_color=COLORS["hover"],
                       text_color=COLORS["primary"], font=font_safe(12, "normal"),
                       width=70, height=28).pack(side="right")
+        ctk.CTkButton(
+            header2, text="导出项目证据", command=self._export_portfolio,
+            fg_color="transparent", hover_color=COLORS["hover"],
+            text_color=COLORS["primary"], font=font_safe(12, "normal"),
+            width=100, height=28,
+        ).pack(side="right", padx=(0, 8))
 
         self.recent_list = ctk.CTkFrame(recent_card, fg_color="transparent")
         self.recent_list.pack(fill="both", expand=True, padx=24, pady=(0, 18))
@@ -131,16 +145,18 @@ class DashboardPage(ctk.CTkFrame):
 
     def check_ai_status(self):
         """后台检测 Ollama 可用性，回填状态胶囊"""
-        self._set_pill("● 检测中…", COLORS["border"], COLORS["text"])
+        self._set_pill("AI 检测中…", COLORS["accent_light"], COLORS["accent"])
 
         def _check():
             from core.sorter_engine import check_ollama
             ok = check_ollama()
             def _apply():
                 if ok:
-                    self._set_pill("● AI 在线 · 点击管理", COLORS["success"], "#ffffff")
+                    self._set_pill(
+                        "AI 在线 · 管理模型", COLORS["success_light"], COLORS["success"])
                 else:
-                    self._set_pill("● AI 离线 · 点击安装", COLORS["danger"], "#ffffff")
+                    self._set_pill(
+                        "AI 离线 · 安装", COLORS["danger_light"], COLORS["danger"])
             safe_after(self, _apply)
 
         threading.Thread(target=_check, daemon=True).start()
@@ -164,11 +180,29 @@ class DashboardPage(ctk.CTkFrame):
 
     def _choose_input(self):
         path = filedialog.askdirectory(
-            initialdir=self.app.config_manager.get("last_input", os.path.expanduser("~/Desktop")))
+            initialdir=self.app.config_manager.get("last_input") or str(desktop_dir()))
         if path:
             self.app.input_var.set(path)
             self.app.config_manager.set("last_input", path)
             self.refresh_stats()
+
+    def _export_portfolio(self):
+        from core.history import HistoryManager
+
+        path = filedialog.asksaveasfilename(
+            title="导出 SnapSort 项目证据",
+            initialdir=str(desktop_dir()),
+            initialfile="SnapSort_项目证据.md",
+            defaultextension=".md",
+            filetypes=[("Markdown", "*.md"), ("所有文件", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            export_portfolio_snapshot(HistoryManager().get_all(), path)
+            messagebox.showinfo("导出完成", "已生成隐私安全的项目证据快照。")
+        except OSError as exc:
+            messagebox.showerror("导出失败", str(exc))
 
     def refresh_stats(self):
         # 历史统计
@@ -267,11 +301,11 @@ class DashboardPage(ctk.CTkFrame):
         top = sum(daily.values())
         self.trend_canvas.create_text(
             w - 2, 2, anchor="ne", text=f"共 {top} 张",
-            font=("TkDefaultFont", 9), fill=COLORS["text_secondary"])
+            font=font_safe(9), fill=COLORS["text_secondary"])
 
         if top == 0:
             self.trend_canvas.create_text(
-                w / 2, h / 2, text="暂无数据", font=("TkDefaultFont", 10),
+                w / 2, h / 2, text="暂无数据", font=font_safe(10),
                 fill=COLORS["text_secondary"])
             return
 
@@ -285,5 +319,5 @@ class DashboardPage(ctk.CTkFrame):
             color = COLORS["primary"] if v else COLORS["border"]
             self.trend_canvas.create_rectangle(x, y0, x + bar_w, y1, fill=color, width=0)
             self.trend_canvas.create_text(
-                x + bar_w / 2, h - 8, text=d[-2:], font=("TkDefaultFont", 8),
+                x + bar_w / 2, h - 8, text=d[-2:], font=font_safe(8),
                 fill=COLORS["text_secondary"])

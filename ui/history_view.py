@@ -3,11 +3,13 @@
 """历史记录页面"""
 import os
 import platform
-import customtkinter as ctk
+import subprocess
 from tkinter import messagebox
 
-from ui.theme import COLORS, font_safe, secondary_button_style, card_frame_style
+import customtkinter as ctk
+
 from core.history import HistoryManager
+from ui.theme import COLORS, card_frame_style, font_safe, secondary_button_style
 
 
 class HistoryPage(ctk.CTkFrame):
@@ -28,9 +30,9 @@ class HistoryPage(ctk.CTkFrame):
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(anchor="w", padx=32, pady=(0, 16))
-        ctk.CTkButton(btn_frame, text="🔄 刷新", command=self.refresh,
+        ctk.CTkButton(btn_frame, text="刷新", command=self.refresh,
                       **secondary_button_style()).pack(side="left", padx=(0, 12))
-        ctk.CTkButton(btn_frame, text="🗑 清空历史", command=self._clear_all,
+        ctk.CTkButton(btn_frame, text="清空历史", command=self._clear_all,
                       fg_color=COLORS["danger"], hover_color="#E6352B",
                       text_color="white", font=font_safe(13, "bold"),
                       height=36).pack(side="left")
@@ -88,9 +90,9 @@ class HistoryPage(ctk.CTkFrame):
         if platform.system() == "Windows":
             os.startfile(path)
         elif platform.system() == "Darwin":
-            os.system(f'open "{path}"')
+            subprocess.Popen(["open", path])
         else:
-            os.system(f'xdg-open "{path}"')
+            subprocess.Popen(["xdg-open", path])
 
     def _delete(self, rid):
         if messagebox.askyesno("确认删除", "确定删除这条历史记录？"):

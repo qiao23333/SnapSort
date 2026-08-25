@@ -1,14 +1,16 @@
+# -*- coding: utf-8 -*-
 customtkinter>=5.2.2,<6.0.0
 requests>=2.28.0
 Pillow>=9.0.0
 pillow-heif>=0.14.0
 openpyxl>=3.0.0
 tkinterdnd2>=0.4.2
+send2trash>=1.8.2
 
 # ── 以下为可选增强，按需手动安装（体积大，勿默认安装）──
 # 拖拽：tkinterdnd2（拖文件夹进窗口设为素材路径，run.sh 会自动尝试安装）
 #
-# 以文搜图升级（CLIP 语义搜索，快 100 倍准 3-5 倍）：
+# 以文搜图升级（CLIP 本地语义搜索）：
 # pip install sentence-transformers>=2.2.0 faiss-cpu>=1.7.0
 #
 # 矢量转化升级（VTracer Rust 引擎，色彩保真度大幅提升）：

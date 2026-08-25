@@ -1,16 +1,16 @@
 # SnapSort — 本地 AI 素材整理工作台
 
-![Tests](https://github.com/YOUR_USERNAME/snapsort/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/qiao23333/SnapSort/actions/workflows/ci.yml/badge.svg)](https://github.com/qiao23333/SnapSort/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-> **Local-first AI photo organizer.** SnapSort turns messy photo dumps into a structured, searchable asset library — event grouping, ABC quality grading, batch renaming — all running offline on your own machine via Ollama. No cloud, no token cost, zero privacy leakage.
+> **Local-first AI photo organizer.** SnapSort turns messy photo dumps into a structured, searchable asset library — event grouping, ABC quality grading, batch renaming — all running locally on your own machine via Ollama. No cloud API or token cost by default.
 
-完全本地运行的 AI 素材整理桌面软件：基于 Ollama 视觉模型，把「一堆杂乱照片」自动变成「按事件成组、按质量分级、按规则命名」的可用素材库。零云端、零 token 费用、隐私不出本机。
+本地优先的 AI 素材整理桌面软件：基于 Ollama 视觉模型，把「一堆杂乱照片」自动变成「按事件成组、按质量分级、按规则命名」的可用素材库。默认不调用云端 API，也不产生 token 费用。
 
-## 📸 截图
+## 界面预览
 
-> 截图待补充（建议：仪表盘 / 事件整理 3 步流程 / 工具箱 / 素材库 / 重复检测结果）
+> Windows 仪表盘与核心流程截图将在每个发布版本中更新，避免文档展示与实际安装包不一致。
 
 ## ✨ 核心功能
 
@@ -31,25 +31,35 @@
 ### 图片工具箱（11 个工具，多数无需 AI）
 | 工具 | 说明 |
 |------|------|
-| 以文搜图 | CLIP 语义搜索，文字找图 |
+| 图片搜索 | 默认用本地视觉模型分批识别并缓存；可选 CLIP/FAISS 增量索引加速 |
 | 位图转矢量 | Marching Squares 等值线 + 贝塞尔平滑，输出 SVG |
 | 重复检测 | MD5 精确查重 + dHash 相似查重（截图变体也能检出） |
 | 批量处理 | 尺寸 / 旋转 / 文字水印（位置、透明度可调） |
 | 批量格式转换 | HEIC↔JPG↔PNG↔WebP，**EXIF 完整保留** |
-| 日期修正 | 批量补 EXIF 拍摄时间，拯救截图日期 |
+| EXIF 信息与日期修正 | 查看并修改日期、标题、描述、作者、关键词、版权、评分；支持批量补拍摄时间 |
 | 图片问答 / 描述 / 智能助手 | Ollama 视觉/文本模型多用途调用 |
 | EXIF 查看 / 自定义重命名 | — |
 
 ### 界面
-- Apple 风格 UI：安静质感配色、跨平台字体自适应（macOS/Windows/Linux）
+- 克制的跨平台 UI：统一品牌色、平台原生中文字体、稳定的图标与信息层级
+- 设置页可在两套内置图标间切换，也可导入自己的 PNG / WebP / JPG / ICO 图标
 - 素材库缩略图：线程池并发 + 磁盘缓存，万张级不卡顿
-- 统一日志双写：界面日志 + `data/logs/` 文件日志
+- 统一日志双写：界面日志 + 用户数据目录中的滚动日志
+- 隐私安全的项目证据导出：只汇总使用数据，不包含图片名和本地路径
+
+### 已知对象
+- 与已知人物、已知地点一致：给具体对象命名、填写描述并上传 1–5 张参考照片
+- 自动分类时会把待分类照片与对象参考图进行实例级视觉比对
+- 工具箱可直接点击已知对象；默认分批识别并缓存，安装可选 CLIP/FAISS 后使用多张参考图的平均视觉特征快速搜索
+- 图片索引只处理新增或修改过的照片；搜索时不再突然重新扫描整个文件夹
+
+作品集叙事、面试展示顺序与证据清单见 [docs/PORTFOLIO_CASE.md](docs/PORTFOLIO_CASE.md)。
 
 ## 🚀 快速开始
 
 ```bash
 # 1. 克隆
-git clone https://github.com/你的用户名/SnapSort.git
+git clone https://github.com/qiao23333/SnapSort.git
 cd SnapSort
 
 # 2. 启动（自动安装依赖）
@@ -81,10 +91,11 @@ app.py                    主入口 + 侧栏路由
 ├── core/                 业务层
 │   ├── sorter_engine.py  AI 分类（重试/降级/结构化解析）
 │   ├── event_classifier.py 事件聚类（间隔切分/合并/命名/分级）
-│   ├── clip_search.py    CLIP 语义搜图
+│   ├── clip_search.py    可选 CLIP/FAISS 增量向量索引
+│   ├── object_search.py  参考图分批识别与结果缓存
 │   ├── rule_engine.py    后处理自动化规则
 │   └── image_utils.py    HEIC/缩略图/矢量化
-└── data/                 配置、缓存、日志（git 忽略）
+└── data/                 只读图标资源（用户数据不会进入安装包）
 ```
 
 **技术要点**：Ollama REST 多模型编排 · ThreadPoolExecutor 并发推理 · Checkpoint 断点续跑 · dHash 感知哈希 · Marching Squares 矢量化 · 滚动日志双写
@@ -94,13 +105,15 @@ app.py                    主入口 + 侧栏路由
 1. **自动分类**：选输入/输出文件夹 → 选模型 → 开始。增量处理，已分类的自动跳过
 2. **按事件整理**：选文件夹 → 配置选项（间隔/分级/命名规则）→ 预览分组 → 确认执行
 3. **工具箱**：11 个独立工具，选文件夹即用
-4. **设置**：标签预设、人物/地点参考库、自动化规则
+4. **设置**：标签预设、人物/地点参考库、自动化规则、应用图标
 
 更多细节见 [DEVBOOK.md](DEVBOOK.md)（开发手册）。
 
 ## 🗺 Roadmap
 
 - [x] v3.1 批量处理（尺寸/旋转/水印）、相似查重、日志双写、拖拽导入、30 秒撤销
+- [x] v3.3 Windows 用户数据隔离、跨平台 CI、Windows 打包冒烟测试
+- [x] v3.6 已知对象参考图库、EXIF 编辑、增量图片搜索与 Windows 首帧优化
 - [ ] 深浅色主题切换
 - [ ] Windows 安装包（Inno Setup）
 - [ ] 更多语言模型评测基准

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """复用 UI 组件"""
 import customtkinter as ctk
+
 from ui.theme import COLORS, font_safe
 
 
@@ -30,7 +31,12 @@ class StatCard(ctk.CTkFrame):
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x", padx=20, pady=(16, 4))
 
-        ctk.CTkLabel(top, text=icon, font=("Apple Color Emoji", 24)).pack(side="left")
+        if icon:
+            ctk.CTkLabel(
+                top, text=icon, width=42, height=24, corner_radius=7,
+                fg_color=COLORS["primary_light"], text_color=COLORS["selected_text"],
+                font=font_safe(11, "bold"),
+            ).pack(side="left")
 
         self.value_label = ctk.CTkLabel(self, text=value, font=font_safe(32, "bold"),
                                         text_color=COLORS["text"])

@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """配置管理"""
-import os
 import json
+import os
 import shutil
-import time
 import threading
+import time
+from copy import deepcopy
 from pathlib import Path
+
+from core.paths import migrate_legacy_file, user_data_dir
+from core.recognition_targets import (
+    DEFAULT_RECOGNITION_TARGETS,
+    LEGACY_GENERIC_TARGET_NAMES,
+)
 
 DEFAULT_CONFIG = {
     "categories": {
-        "工厂图": "工厂厂房、仓库、生产线、机械设备、工业场景、车间、制造现场",
-        "人物肖像图": "负责人个人肖像、负责人特写、负责人形象照、个人品牌照片、负责人单人照",
-        "本地风景图": "澳大利亚自然风景、海滩、城市天际线、地标建筑、本地户外、悉尼歌剧院、海岸",
-        "办公室图": "办公室内景、办公桌、会议室、办公环境、公司前台、办公空间",
-        "合作洽谈图": "两人或以上会面、握手、签约、商务洽谈、交流讨论、会议场景"
+        "人物": "人物肖像、人物特写、合影、互动场景",
+        "风景": "自然景观、城市风光、地标建筑、户外场景",
+        "工作": "办公室、会议、设备、工作过程、协作场景",
+        "生活": "美食、家居、宠物、旅行、日常记录",
+        "文档": "截图、表格、票据、证件、文字资料"
     },
     "model": "llava:13b",
     "confidence_threshold": 0.6,
@@ -22,6 +29,10 @@ DEFAULT_CONFIG = {
     "incremental": True,
     "report_format": "csv",
     "theme": "light",
+    "app_icon": {
+        "preset": "direct",
+        "custom_path": "",
+    },
     "last_input": "",
     "last_output": "",
     "rules": [],
@@ -67,26 +78,33 @@ DEFAULT_CONFIG = {
         }
     },
     "active_tag_preset": "默认ABC",
-    "business_context": "本地通用业务移民公司，负责人是企业用户，素材用于短视频展示真实雇主实力和本地工作场景。",
+    "business_context": "",
     "optimized_prompt": "",
     "min_photos_per_event": 2,
     "known_persons": [],
-    "person_recognition": True,
+    "person_recognition": False,
     "known_places": [],
-    "place_recognition": True
+    "place_recognition": False,
+    "recognition_targets_enabled": True,
+    "recognition_targets": deepcopy(DEFAULT_RECOGNITION_TARGETS),
 }
+
+
+def _fresh_defaults():
+    """返回互不共享嵌套对象的默认配置。"""
+    return deepcopy(DEFAULT_CONFIG)
 
 
 class ConfigManager:
     def __init__(self, config_path=None):
         if config_path is None:
-            # 配置文件统一放在 data/ 目录下
-            root = Path(__file__).parent.parent
-            self.config_path = root / "data" / "snapsort_config.json"
+            self.config_path = user_data_dir() / "snapsort_config.json"
+            migrate_legacy_file("snapsort_config.json", self.config_path)
         else:
             self.config_path = Path(config_path)
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self._save_timer = None
+        self._save_lock = threading.RLock()
         self.config = self.load()
 
     def load(self):
@@ -101,39 +119,48 @@ class ConfigManager:
                                  str(self.config_path) + f".corrupt.{int(time.time())}")
                 except Exception:
                     pass
-                config = DEFAULT_CONFIG.copy()
+                config = _fresh_defaults()
                 self.save(config)
                 return config
             # 合并默认值，防止升级后缺字段
             for k, v in DEFAULT_CONFIG.items():
                 if k not in config:
-                    config[k] = v
+                    config[k] = deepcopy(v)
                 elif isinstance(v, dict) and k in config:
                     for sub_k, sub_v in v.items():
                         if sub_k not in config[k]:
-                            config[k][sub_k] = sub_v
+                            config[k][sub_k] = deepcopy(sub_v)
+            # 3.5.0 曾短暂加入三个纯文字的泛化目标；它们不符合“用参考图
+            # 教 AI 认识具体对象”的产品定义。仅在列表仍完全等于旧默认时迁移，
+            # 避免覆盖用户已经自行编辑过的内容。
+            targets = config.get("recognition_targets", []) or []
+            if ({str(item.get("name", "")) for item in targets}
+                    == LEGACY_GENERIC_TARGET_NAMES and len(targets) == 3):
+                config["recognition_targets"] = deepcopy(DEFAULT_RECOGNITION_TARGETS)
+                self.save(config)
             return config
-        self.save(DEFAULT_CONFIG.copy())
-        return DEFAULT_CONFIG.copy()
+        config = _fresh_defaults()
+        self.save(config)
+        return config
 
     def save(self, config=None):
-        if config is None:
-            config = self.config
-        # 原子写入：先写临时文件再替换，避免写入中断导致 config.json 损坏
-        tmp_path = str(self.config_path) + ".tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self.config_path)
-        except OSError:
-            # 临时文件写入失败时清理残留，保持原配置不动
+        with self._save_lock:
+            if config is None:
+                config = self.config
+            # 原子写入：先写临时文件再替换，避免写入中断导致 config.json 损坏
+            tmp_path = str(self.config_path) + ".tmp"
             try:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, self.config_path)
             except OSError:
-                pass
-            raise
-        self.config = config
+                try:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            self.config = config
 
     def get(self, key, default=None):
         return self.config.get(key, default)

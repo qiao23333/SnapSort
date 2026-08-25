@@ -1,7 +1,7 @@
 # SnapSort 开发者手册 (DEVBOOK)
 
 > 写给 AI 助手和后台开发人员的完整开发指南
-> 版本 3.0 | 最后更新 2026-08-16
+> 版本 3.3 | 最后更新 2026-08-20
 
 ---
 
@@ -98,13 +98,13 @@ SnapSort 是一套**本地 AI 驱动的素材管理桌面软件**。核心能力
 │  ├── rule_engine.py   规则引擎 (IF-THEN 后处理)         │
 │  ├── image_utils.py   图片工具 + 位图转矢量算法          │
 │  ├── model_info.py    模型角色映射与用途说明             │
+│  ├── paths.py         跨平台资源/用户数据目录            │
+│  ├── version.py       单一版本号来源                     │
 │  ├── report.py        报告生成 (CSV/Excel)             │
 │  └── history.py       历史记录 CRUD                    │
 ├──────────────────────────────────────────────────────┤
 │  data/                                               │
-│  ├── snapsort_config.json  配置文件                   │
-│  ├── history.json          历史记录                   │
-│  └── thumbnails/           缩略图磁盘缓存              │
+│  └── snapsort_icon.*       只读程序图标                │
 ├──────────────────────────────────────────────────────┤
 │  packaging/                打包分发                   │
 │  ├── snapsort.spec         PyInstaller spec           │
@@ -134,6 +134,8 @@ SnapSort素材分类器/
 │   ├── rule_engine.py        # 规则引擎 (IF-THEN)
 │   ├── image_utils.py        # encode_image, make_thumbnail, bitmap_to_vector_svg
 │   ├── model_info.py         # 模型角色映射, 视觉/文本判断, 用途说明
+│   ├── paths.py              # 系统用户数据、缓存和只读资源路径
+│   ├── version.py            # 单一版本号来源
 │   ├── report.py             # CSV/Excel 报告生成
 │   └── history.py            # HistoryManager: JSON CRUD
 │
@@ -148,10 +150,7 @@ SnapSort素材分类器/
 │   ├── history_view.py       # 历史记录页面
 │   └── settings.py           # 设置页面 (分类/规则/模型)
 │
-├── data/                     # 运行时数据（JSON + 缓存）
-│   ├── snapsort_config.json
-│   ├── history.json
-│   └── thumbnails/           # 缩略图磁盘缓存 (PNG)
+├── data/                     # 只读程序图标，不存放用户数据
 │
 ├── packaging/                # 打包分发
 │   ├── snapsort.spec         # PyInstaller spec 文件
@@ -159,7 +158,6 @@ SnapSort素材分类器/
 │   ├── build_macos.sh        # macOS 一键打包
 │   └── README_WINDOWS.md     # Windows 部署指南
 │
-├── assets/                   # 图标资源
 └── docs/                     # 历史文档
 ```
 
@@ -334,9 +332,11 @@ app.py main()
 
 ### 6.1 配置文件位置
 
-```
-SnapSort素材分类器/data/snapsort_config.json
-```
+- Windows：`%LOCALAPPDATA%\SnapSort\snapsort_config.json`
+- macOS：`~/Library/Application Support/SnapSort/snapsort_config.json`
+- Linux：`$XDG_DATA_HOME/SnapSort/snapsort_config.json`
+
+源码模式首次启动时会迁移旧版 `data/snapsort_config.json`。安装包内的资源始终只读。
 
 ### 6.2 新增配置项
 
@@ -381,8 +381,8 @@ Apple Design Token 风格配色：
 ### 7.3 素材库缩略图缓存 (`ui/gallery.py`) — v2.3 新增
 
 ```python
-# 缓存路径
-data/thumbnails/{md5_hash}.png
+# 缓存路径（由 core.paths.user_cache_dir() 决定）
+{user_cache_dir}/thumbnails/{md5_hash}.png
 
 # 缓存键 = md5(文件路径 + 修改时间 + 文件大小 + 缩略图尺寸)
 # 首次加载生成缩略图并缓存，后续直接从磁盘读取
@@ -418,7 +418,7 @@ data/thumbnails/{md5_hash}.png
 
 1. **模型列表异步加载** — 后台线程运行，不阻塞 UI 首次渲染
 2. **日志行数限制** — `_max_log_lines = 800` 防止 ScrolledText 内存泄漏
-3. **缩略图磁盘缓存** — v2.3 新增，PNG 缓存到 data/thumbnails/
+3. **缩略图磁盘缓存** — PNG 缓存到用户缓存目录的 `SnapSort/thumbnails/`
 4. **缩略图懒加载** — Gallery 页面最多显示 300 张，分批渲染（每批 12 张）
 5. **图片压缩** — `encode_image(max_size_kb=1024)` 自动缩小大图
 6. **增量处理** — 已分类文件跳过，避免重复 AI 调用
@@ -754,26 +754,16 @@ pip install pillow-heif
 
 ### Q: 缩略图缓存怎么清理？
 
-A: 在素材库页面点击「🗑 清缓存」按钮，或手动删除 `data/thumbnails/` 目录。
+A: 在素材库页面点击「🗑 清缓存」按钮。缓存位于系统用户缓存目录，不在源码目录中。
 
 ---
 
 ## 附录 A: Python 环境
 
-本项目开发使用 **WorkBuddy 管理的 Python 3.13.12**：
+开发时建议使用 Python 3.10–3.12 的项目虚拟环境，并通过 `requirements.txt` 与
+`requirements-dev.txt` 安装运行和测试依赖。不要在文档中记录个人电脑的绝对路径。
 
-```bash
-# 路径
-/Users/apple/.workbuddy/binaries/python/versions/3.13.12/bin/python3
-
-# 虚拟环境
-/Users/apple/.workbuddy/binaries/python/envs/default/
-
-# 安装新包
-/Users/apple/.workbuddy/binaries/python/envs/default/bin/pip install <package>
-```
-
-打包后的 exe/app 不依赖此路径，可分发给任何用户。
+打包后的 exe/app 不依赖开发机上的 Python 路径。
 
 ## 附录 B: 相关资源
 

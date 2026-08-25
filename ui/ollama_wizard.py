@@ -3,19 +3,15 @@
 """
 Ollama 安装向导 — 首次使用或 AI 离线时弹出，引导用户下载安装 Ollama + 拉取模型。
 """
-import os
-import sys
+import json
 import platform
 import threading
 import webbrowser
-import json
 
 import customtkinter as ctk
-from tkinter import messagebox
 
-from ui.theme import COLORS, font_safe, primary_button_style, secondary_button_style, card_frame_style
+from ui.theme import COLORS, card_frame_style, font_safe, primary_button_style
 from ui.widgets import safe_after
-
 
 # 推荐模型列表（名称、大小、说明）
 RECOMMENDED_MODELS = [
@@ -236,6 +232,7 @@ class OllamaWizard(ctk.CTkToplevel):
         def _pull():
             try:
                 import requests
+
                 from core.sorter_engine import DEFAULT_URL
                 with requests.post(f"{DEFAULT_URL}/api/pull",
                                    json={"name": model_name, "stream": True},
@@ -271,7 +268,7 @@ class OllamaWizard(ctk.CTkToplevel):
                 ))
                 safe_after(self, self._check_status)
             except Exception as e:
-                safe_after(self, lambda: self.pull_status.set(f"❌ 下载失败：{e}"))
+                safe_after(self, lambda error=e: self.pull_status.set(f"❌ 下载失败：{error}"))
 
         threading.Thread(target=_pull, daemon=True).start()
 

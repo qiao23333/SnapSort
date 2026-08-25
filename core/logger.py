@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""统一日志：界面日志照旧显示，同时写入 data/logs/snapsort.log（滚动保留）"""
-import os
+"""统一日志：界面日志照旧显示，同时写入用户日志目录（滚动保留）。"""
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 
-_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "logs")
+from core.paths import user_data_dir
+
+_LOG_DIR = str(user_data_dir() / "logs")
 _LOG_FILE = os.path.join(_LOG_DIR, "snapsort.log")
 _configured = False
 

@@ -1,11 +1,11 @@
-# SnapSort v3.2.2 迁移指南
+# SnapSort v3.4.0 迁移指南
 
 ## 一、迁移到新电脑
 
 ### 方法 A：用 .app / .exe 打包版（最省事，无需装 Python）
 
 **macOS：**
-1. 将 `SnapSort_macOS_v3.2.2.zip` 拷到新 Mac（U盘/AirDrop/云盘）
+1. 将 `SnapSort_macOS_v3.4.0.zip` 拷到新 Mac（U盘/AirDrop/云盘）
 2. 解压得到 `SnapSort.app`
 3. 双击 `SnapSort.app` 即可运行
 4. 首次打开可能提示"无法验证开发者"，右键→打开即可
@@ -20,7 +20,7 @@
 
 ### 方法 B：用源码迁移包（需要装 Python）
 
-1. 将 `SnapSort_v3.2.2_迁移包.zip` 拷贝到新电脑
+1. 将 `SnapSort_v3.4.0_迁移包.zip` 拷贝到新电脑
 2. 解压到任意目录
 3. 双击 `启动SnapSort.command`（macOS）或运行 `run.bat`（Windows）
 
@@ -33,7 +33,7 @@
 ### 方法 C：从 GitHub 克隆
 
 ```bash
-git clone https://github.com/你的用户名/SnapSort.git
+git clone https://github.com/qiao23333/SnapSort.git
 cd SnapSort
 bash run.sh
 ```
@@ -69,19 +69,15 @@ git config --global user.email "你的邮箱"
 
 ```bash
 cd ~/Desktop/SnapSort素材分类器
-git remote add origin https://github.com/你的用户名/SnapSort.git
+git remote add origin https://github.com/qiao23333/SnapSort.git
 git push -u origin main
 ```
 
-首次推送时会弹出登录窗口，输入 GitHub 账号密码或 Personal Access Token。
+首次推送时建议使用 Git Credential Manager 或 GitHub CLI 完成登录。
 
-### 4. 获取 Token（如果密码不工作）
+### 4. 安全登录
 
-GitHub 已不支持密码推送，需要 Token：
-1. 打开 https://github.com/settings/tokens
-2. Generate new token (classic)
-3. 勾选 `repo` 权限
-4. 复制 token，推送时密码栏粘贴 token
+推荐安装 GitHub CLI 后执行 `gh auth login`。不要把访问令牌写入项目文件、迁移说明或聊天记录；如果令牌曾以明文保存，请立即在 GitHub 设置中撤销并重新创建。
 
 ---
 

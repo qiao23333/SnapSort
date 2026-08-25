@@ -44,7 +44,7 @@ def get_model_hint(model_name: str) -> str:
         return "未知模型"
     name_lower = model_name.lower()
     # 先检查视觉模型（更具体的匹配优先）
-    for prefix, hint in MODEL_HINTS.items():
+    for prefix, hint in sorted(MODEL_HINTS.items(), key=lambda item: len(item[0]), reverse=True):
         if prefix in name_lower:
             return hint
     return "本地大模型"

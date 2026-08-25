@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
-REM SnapSort 3.0 Windows 启动脚本（源码模式）
+REM SnapSort 3.4.0 Windows 启动脚本（源码模式）
 REM 推荐使用 packaging\build_windows.bat 打包成 exe 后分发
 REM 此脚本需要用户已安装 Python
 
@@ -39,25 +39,24 @@ if errorlevel 1 (
 )
 echo ✅ tkinter 已就绪
 
-REM 安装依赖
+REM 检查所有必需依赖，避免只装了 customtkinter 时误判为环境完整
 echo ℹ️  检查依赖...
-%PYTHON% -c "import customtkinter" >nul 2>&1
+%PYTHON% -c "import customtkinter, requests, PIL, pillow_heif, openpyxl, tkinterdnd2" >nul 2>&1
 if errorlevel 1 (
-    echo 📦 首次运行，安装依赖...
-    %PYTHON% -m pip install customtkinter requests Pillow pillow-heif openpyxl
+    echo 📦 首次运行或依赖不完整，正在安装...
+    %PYTHON% -m pip install --upgrade pip
     if errorlevel 1 (
-        echo ❌ 依赖安装失败，请手动运行:
-        echo    pip install customtkinter requests Pillow pillow-heif openpyxl
+        echo ❌ pip 更新失败
         pause
         exit /b 1
     )
-)
-
-REM 拖拽支持（可选，失败不阻塞）
-%PYTHON% -c "import tkinterdnd2" >nul 2>&1
-if errorlevel 1 (
-    echo ℹ️  安装拖拽支持（可选）...
-    %PYTHON% -m pip install tkinterdnd2 >nul 2>&1
+    %PYTHON% -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo ❌ 依赖安装失败，请手动运行:
+        echo    python -m pip install -r requirements.txt
+        pause
+        exit /b 1
+    )
 )
 echo ✅ 依赖已就绪
 

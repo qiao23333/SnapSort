@@ -5,15 +5,29 @@
 """
 import os
 import threading
-import customtkinter as ctk
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog
 
-from ui.theme import COLORS, font_safe, primary_button_style, secondary_button_style, card_frame_style
-from core.image_utils import is_image_file
-from core.sorter_engine import SorterEngine, fetch_ollama_models, get_processed_files, optimize_prompt
-from core.model_info import get_model_hint, get_model_role_tag
+import customtkinter as ctk
+
 from core.event_classifier import (
-    EventPipeline, Checkpoint, scan_photos, group_by_date, BatchRenamer, EventAnalyzer
+    Checkpoint,
+    EventPipeline,
+)
+from core.image_utils import is_image_file
+from core.model_info import get_model_hint, get_model_role_tag
+from core.sorter_engine import (
+    SorterEngine,
+    fetch_ollama_models,
+    get_processed_files,
+    optimize_prompt,
+)
+from ui.theme import (
+    COLORS,
+    card_frame_style,
+    font_mono,
+    font_safe,
+    primary_button_style,
+    secondary_button_style,
 )
 
 
@@ -64,7 +78,7 @@ class AutoSortPage(ctk.CTkFrame):
                                              font=font_safe(13),
                                              dropdown_font=font_safe(13))
         self.model_combo.pack(side="left", padx=(10, 10))
-        ctk.CTkButton(r2, text="🔄", command=self._refresh_model_list, width=36, height=34,
+        ctk.CTkButton(r2, text="刷新", command=self._refresh_model_list, width=56, height=34,
                       fg_color=COLORS["card"], hover_color=COLORS["hover"],
                       text_color=COLORS["text"]).pack(side="left", padx=(0, 20))
         self.model_hint = ctk.CTkLabel(r2, text="", font=font_safe(11),
@@ -107,7 +121,7 @@ class AutoSortPage(ctk.CTkFrame):
             ctk.CTkEntry(r, textvariable=var, font=font_safe(13), height=34,
                          fg_color=COLORS["bg"],
                          border_color=COLORS["border"]).pack(side="left", fill="x", expand=True, padx=(10, 10))
-            ctk.CTkButton(r, text="选", command=lambda v=var: self._pick_folder(v), width=40, height=34,
+            ctk.CTkButton(r, text="选择", command=lambda v=var: self._pick_folder(v), width=56, height=34,
                           font=font_safe(12), fg_color=COLORS["card"], hover_color=COLORS["hover"],
                           text_color=COLORS["text"], corner_radius=8).pack(side="left")
 
@@ -131,12 +145,12 @@ class AutoSortPage(ctk.CTkFrame):
         if person_on:
             names = "、".join(p.get("name", "") for p in known_persons[:4])
             more = f" 等{len(known_persons)}人" if len(known_persons) > 4 else ""
-            ctk.CTkLabel(cfg, text=f"👤 人物识别：{names}{more}",
+            ctk.CTkLabel(cfg, text=f"人物识别：{names}{more}",
                          font=font_safe(11), fg_color=COLORS["selected"],
                          text_color=COLORS["primary"], corner_radius=5, padx=8, pady=3).pack(
                              side="left", padx=(12, 0))
         elif not known_persons:
-            ctk.CTkLabel(cfg, text="👤 人物识别：未设置（设置→已知人物）",
+            ctk.CTkLabel(cfg, text="人物识别：未设置（设置 → 已知人物）",
                          font=font_safe(11), fg_color=COLORS["hover"],
                          text_color=COLORS["text_secondary"], corner_radius=5, padx=8, pady=3).pack(
                              side="left", padx=(12, 0))
@@ -147,12 +161,12 @@ class AutoSortPage(ctk.CTkFrame):
         if place_on:
             names = "、".join(p.get("name", "") for p in known_places[:4])
             more = f" 等{len(known_places)}处" if len(known_places) > 4 else ""
-            ctk.CTkLabel(cfg, text=f"📍 地点识别：{names}{more}",
+            ctk.CTkLabel(cfg, text=f"地点识别：{names}{more}",
                          font=font_safe(11), fg_color=COLORS["selected"],
                          text_color=COLORS["primary"], corner_radius=5, padx=8, pady=3).pack(
                              side="left", padx=(8, 0))
         elif not known_places:
-            ctk.CTkLabel(cfg, text="📍 地点识别：未设置（设置→已知地点）",
+            ctk.CTkLabel(cfg, text="地点识别：未设置（设置 → 已知地点）",
                          font=font_safe(11), fg_color=COLORS["hover"],
                          text_color=COLORS["text_secondary"], corner_radius=5, padx=8, pady=3).pack(
                              side="left", padx=(8, 0))
@@ -171,15 +185,15 @@ class AutoSortPage(ctk.CTkFrame):
 
         bf = ctk.CTkFrame(prog, fg_color="transparent")
         bf.pack(fill="x", padx=24, pady=(0, 16))
-        self.btn_start = ctk.CTkButton(bf, text="🚀 开始分类",
+        self.btn_start = ctk.CTkButton(bf, text="开始分类",
                                        command=self._cat_start, **primary_button_style())
         self.btn_start.pack(side="left", padx=(0, 10))
-        self.btn_stop = ctk.CTkButton(bf, text="⏹ 停止", command=self._stop,
-                                      fg_color=COLORS["danger"], hover_color="#E6352B",
+        self.btn_stop = ctk.CTkButton(bf, text="停止", command=self._stop,
+                                      fg_color=COLORS["border_light"], hover_color="#E6352B",
                                       text_color="white", font=font_safe(13, "bold"),
                                       height=36, state="disabled")
         self.btn_stop.pack(side="left", padx=(0, 10))
-        ctk.CTkButton(bf, text="📂 打开输出", command=self.app.open_output_folder,
+        ctk.CTkButton(bf, text="打开输出文件夹", command=self.app.open_output_folder,
                       **secondary_button_style()).pack(side="left")
 
         log = ctk.CTkFrame(p, **card_frame_style())
@@ -187,7 +201,7 @@ class AutoSortPage(ctk.CTkFrame):
         ctk.CTkLabel(log, text="日志", font=font_safe(17, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", padx=24, pady=(16, 8))
         self.log_text = scrolledtext.ScrolledText(log, wrap="word",
-                                                   font=("SF Mono", 12), bg="#0f172a", fg="#e2e8f0",
+                                                   font=font_mono(12), bg="#0f172a", fg="#e2e8f0",
                                                    relief="flat", padx=10, pady=10)
         self.log_text.pack(fill="both", expand=True, padx=24, pady=(0, 16))
         self.log_text.config(state="disabled")
@@ -235,7 +249,7 @@ class AutoSortPage(ctk.CTkFrame):
             ctk.CTkEntry(r, textvariable=var, font=font_safe(13), height=32,
                          fg_color=COLORS["bg"],
                          border_color=COLORS["border"]).pack(side="left", fill="x", expand=True, padx=(8, 8))
-            ctk.CTkButton(r, text="选", command=lambda v=var: self._pick_folder(v), width=40, height=32,
+            ctk.CTkButton(r, text="选择", command=lambda v=var: self._pick_folder(v), width=56, height=32,
                           font=font_safe(12), fg_color=COLORS["card"], hover_color=COLORS["hover"],
                           text_color=COLORS["text"], corner_radius=8).pack(side="left")
 
@@ -261,7 +275,7 @@ class AutoSortPage(ctk.CTkFrame):
         pattern_label_row.pack(fill="x", padx=20, pady=(8, 0))
         ctk.CTkLabel(pattern_label_row, text="命名规则", font=font_safe(12, "bold"),
                      text_color=COLORS["text"], width=70).pack(side="left")
-        ctk.CTkLabel(pattern_label_row, text="💡 点击标签插入 / 拖拽到输入框 / 直接键盘输入",
+        ctk.CTkLabel(pattern_label_row, text="点击标签插入 / 拖拽到输入框 / 直接键盘输入",
                      font=font_safe(10),
                      text_color=COLORS["text_secondary"]).pack(side="left", padx=(8, 0))
 
@@ -273,7 +287,7 @@ class AutoSortPage(ctk.CTkFrame):
                 "rename_pattern", "{date}_{event}_{seq:02d}{grade}_{desc}"))
         self.evt_pattern_var.trace_add("write", self._update_pattern_preview)
         self.evt_pattern_entry = ctk.CTkEntry(pattern_row, textvariable=self.evt_pattern_var,
-                     font=("SF Mono", 13), height=34,
+                     font=font_mono(13), height=34,
                      fg_color=COLORS["bg"], border_color=COLORS["border"],
                      border_width=1.5)
         self.evt_pattern_entry.pack(side="left", fill="x", expand=True, padx=(70, 4))
@@ -365,11 +379,11 @@ class AutoSortPage(ctk.CTkFrame):
                                         fg_color=COLORS["bg"],
                                         border_color=COLORS["border"], border_width=1)
         self.ctx_text.pack(fill="x", padx=20, pady=(4, 4))
-        # 业务背景：沿用上次编辑内容；若为空则填入默认范例供用户修改
+        # 业务背景：沿用上次编辑内容；若为空则填入通用范例供用户修改
         saved_ctx = self.app.config_manager.get("business_context", "")
         default_ctx = saved_ctx if saved_ctx else (
-            "本地通用业务移民公司，负责人是企业用户，"
-            "素材用于短视频展示真实雇主实力和本地工作场景。"
+            "用于整理个人创作素材，希望优先识别人物、地点、活动与画面质量，"
+            "结果将用于照片归档和内容选片。"
         )
         self.ctx_text.insert("1.0", default_ctx)
 
@@ -377,7 +391,7 @@ class AutoSortPage(ctk.CTkFrame):
         self.opt_prompt_row = ctk.CTkFrame(card, fg_color="transparent")
         self.opt_prompt_row.pack(fill="x", padx=20, pady=(0, 8))
         self.opt_prompt_btn = ctk.CTkButton(
-            self.opt_prompt_row, text="✨ AI 优化提示词",
+            self.opt_prompt_row, text="AI 优化提示词",
             command=self._optimize_prompt,
             font=font_safe(12, "bold"), fg_color=COLORS.get("accent", "#D97706"),
             hover_color=COLORS.get("accent_hover", "#B45309"), text_color="white", height=30, width=140)
@@ -388,7 +402,7 @@ class AutoSortPage(ctk.CTkFrame):
         self.opt_prompt_status.pack(side="left", padx=(8, 0))
         # 显示是否已有优化提示词
         if self.app.config_manager.get("optimized_prompt", ""):
-            self.opt_prompt_status.configure(text="✅ 已有优化提示词", text_color=COLORS["success"])
+            self.opt_prompt_status.configure(text="已有优化提示词", text_color=COLORS["success"])
 
         # 默认折叠
         self.ctx_text.pack_forget()
@@ -403,11 +417,10 @@ class AutoSortPage(ctk.CTkFrame):
         inner = ctk.CTkFrame(btn_card, fg_color="transparent")
         inner.pack(fill="x", padx=20, pady=(0, 6))
 
-        self.evt_run = ctk.CTkButton(inner, text="🚀 一键扫描 + 分析 + 重命名",
+        self.evt_run = ctk.CTkButton(inner, text="一键扫描 + 分析 + 重命名",
                                      command=self._evt_run,
-                                     fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
-                                     text_color="white", font=font_safe(14, "bold"),
-                                     height=42, corner_radius=12)
+                                     **primary_button_style())
+        self.evt_run.configure(height=42, font=font_safe(14, "bold"))
         self.evt_run.pack(side="left", padx=(0, 8), fill="x", expand=True)
 
         self.evt_force = ctk.CTkButton(inner, text="↻ 强制重跑",
@@ -417,7 +430,7 @@ class AutoSortPage(ctk.CTkFrame):
                                         height=42, corner_radius=12, state="disabled")
         self.evt_force.pack(side="left")
 
-        self.evt_stop_btn = ctk.CTkButton(inner, text="⏹", command=self._stop,
+        self.evt_stop_btn = ctk.CTkButton(inner, text="停止", command=self._stop,
                                           fg_color=COLORS["danger"], hover_color="#E6352B",
                                           text_color="white", font=font_safe(13, "bold"),
                                           height=42, width=50, corner_radius=12, state="disabled")
@@ -485,11 +498,11 @@ class AutoSortPage(ctk.CTkFrame):
                                                font=font_safe(12),
                                                command=self._switch_preset)
         self.preset_combo.pack(side="left", padx=(4, 8))
-        ctk.CTkButton(preset_row, text="💾 另存为", command=self._save_preset_as,
+        ctk.CTkButton(preset_row, text="另存为", command=self._save_preset_as,
                       width=70, height=28, font=font_safe(11),
                       fg_color=COLORS["card"], hover_color=COLORS["hover"],
                       text_color=COLORS["text"]).pack(side="left", padx=(0, 4))
-        ctk.CTkButton(preset_row, text="🗑 删除", command=self._delete_preset,
+        ctk.CTkButton(preset_row, text="删除", command=self._delete_preset,
                       width=60, height=28, font=font_safe(11),
                       fg_color=COLORS["danger"], hover_color="#E6352B",
                       text_color="white").pack(side="left", padx=(0, 4))
@@ -508,7 +521,7 @@ class AutoSortPage(ctk.CTkFrame):
         self._render_tag_entries()
 
         # 添加标签按钮
-        ctk.CTkButton(self._rules_body, text="➕ 添加标签",
+        ctk.CTkButton(self._rules_body, text="添加标签",
                       command=self._add_tag_entry,
                       width=100, height=28, font=font_safe(11),
                       fg_color=COLORS["card"], hover_color=COLORS["hover"],
@@ -516,9 +529,9 @@ class AutoSortPage(ctk.CTkFrame):
         # 重命名规则提示
         rr = ctk.CTkFrame(self._rules_body, fg_color="transparent")
         rr.pack(fill="x", padx=20, pady=(8, 4))
-        ctk.CTkLabel(rr, text="📝 命名", font=font_safe(12, "bold"),
+        ctk.CTkLabel(rr, text="命名", font=font_safe(12, "bold"),
                      text_color=COLORS["text"], width=70).pack(side="left")
-        ctk.CTkLabel(rr, text="💡 在上方①区域点击变量标签或拖拽到输入框组合规则，也可直接键盘输入",
+        ctk.CTkLabel(rr, text="在上方①区域点击变量标签或拖拽到输入框组合规则，也可直接键盘输入",
                      font=font_safe(12),
                      text_color=COLORS["text_secondary"]).pack(side="left", padx=(4, 0))
         ctk.CTkLabel(self._rules_body, text="", height=4).pack()
@@ -535,7 +548,7 @@ class AutoSortPage(ctk.CTkFrame):
         ctk.CTkLabel(left, text="④ 预览 & 结果", font=font_safe(14, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", padx=16, pady=(10, 4))
         self.evt_preview = scrolledtext.ScrolledText(left, wrap="word", height=14,
-                                                      font=("SF Mono", 11), bg="#0f172a", fg="#e2e8f0",
+                                                      font=font_mono(11), bg="#0f172a", fg="#e2e8f0",
                                                       relief="flat", padx=10, pady=8)
         self.evt_preview.pack(fill="both", expand=True, padx=16, pady=(0, 10))
         self.evt_preview.insert("1.0", "点「🚀 一键开始」扫描日期 + AI分析 + 重命名。\n"
@@ -547,7 +560,7 @@ class AutoSortPage(ctk.CTkFrame):
         ctk.CTkLabel(right, text="日志", font=font_safe(14, "bold"),
                      text_color=COLORS["text"]).pack(anchor="w", padx=16, pady=(10, 4))
         self.log_text = scrolledtext.ScrolledText(right, wrap="word", height=14,
-                                                   font=("SF Mono", 11), bg="#0f172a", fg="#e2e8f0",
+                                                   font=font_mono(11), bg="#0f172a", fg="#e2e8f0",
                                                    relief="flat", padx=10, pady=8)
         self.log_text.pack(fill="both", expand=True, padx=16, pady=(0, 10))
         self.log_text.config(state="disabled")
@@ -570,13 +583,13 @@ class AutoSortPage(ctk.CTkFrame):
             return
 
         model = self.model_var.get()
-        self.opt_prompt_btn.configure(state="disabled", text="⏳ 优化中...")
+        self.opt_prompt_btn.configure(state="disabled", text="优化中…")
         self.opt_prompt_status.configure(text="正在让 AI 优化提示词...", text_color=COLORS["text_secondary"])
 
         def _run():
             ok, result = optimize_prompt(ctx, model)
             def _done():
-                self.opt_prompt_btn.configure(state="normal", text="✨ AI 优化提示词")
+                self.opt_prompt_btn.configure(state="normal", text="AI 优化提示词")
                 if ok:
                     self.app.config_manager.set("optimized_prompt", result)
                     self.app.config_manager.set("business_context", ctx)
@@ -895,7 +908,7 @@ class AutoSortPage(ctk.CTkFrame):
                 )
                 self._safe_after(self._evt_show_result)
             except Exception as e:
-                self._safe_after(lambda: self._log(f"❌ {e}"))
+                self._safe_after(lambda error=e: self._log(f"❌ {error}"))
                 self._safe_after(lambda: self._evt_ui_state(True))
             finally:
                 self._safe_after(lambda: self.app.set_task_running(False))
@@ -1163,7 +1176,7 @@ class AutoSortPage(ctk.CTkFrame):
         self.app.config_manager.set("incremental", self.inc_var.get())
         self._clear_log()
         self.btn_start.configure(state="disabled")
-        self.btn_stop.configure(state="normal")
+        self.btn_stop.configure(state="normal", fg_color=COLORS["danger"])
         self.progress_bar.set(0)
         self.status_var.set("准备中...")
         self.app.set_task_running(True, "内容分类中")
@@ -1190,7 +1203,7 @@ class AutoSortPage(ctk.CTkFrame):
 
     def _cat_reset(self, ok):
         self.btn_start.configure(state="normal")
-        self.btn_stop.configure(state="disabled")
+        self.btn_stop.configure(state="disabled", fg_color=COLORS["border_light"])
         self.status_var.set("完成" if ok else "失败")
         self.app.set_task_running(False)
         if ok:

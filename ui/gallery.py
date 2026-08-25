@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """素材库页面：按分类浏览缩略图 — 后台生成、磁盘缓存、分批渲染、点击预览"""
-import os
 import hashlib
+import os
 import threading
-import queue
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
 import customtkinter as ctk
 from PIL import Image, ImageTk
-from concurrent.futures import ThreadPoolExecutor
 
-from ui.theme import COLORS, font_safe, secondary_button_style, card_frame_style
-from core.image_utils import make_thumbnail, is_image_file
+from core.image_utils import is_image_file, make_thumbnail
+from core.paths import user_cache_dir
+from ui.theme import COLORS, card_frame_style, font_safe, secondary_button_style
 
 
 def _thumb_cache_dir():
     """获取缩略图磁盘缓存目录"""
-    cache = Path(__file__).parent.parent / "data" / "thumbnails"
+    cache = user_cache_dir() / "thumbnails"
     cache.mkdir(parents=True, exist_ok=True)
     return cache
 
@@ -80,9 +81,9 @@ class GalleryPage(ctk.CTkFrame):
                                                command=self._on_category_change)
         self.category_menu.pack(side="left", padx=(8, 16))
 
-        ctk.CTkButton(filter_frame, text="🔄 刷新", command=self.refresh,
+        ctk.CTkButton(filter_frame, text="刷新", command=self.refresh,
                       **secondary_button_style()).pack(side="left")
-        ctk.CTkButton(filter_frame, text="🗑 清缓存", command=self.clear_cache,
+        ctk.CTkButton(filter_frame, text="清理缓存", command=self.clear_cache,
                       **secondary_button_style()).pack(side="left", padx=(8, 0))
 
         self.info_label = ctk.CTkLabel(filter_frame, text="",
@@ -282,7 +283,7 @@ class GalleryPage(ctk.CTkFrame):
         self._preview_window.transient(self)
 
         try:
-            from core.image_utils import _safe_open_image, _cleanup_temp
+            from core.image_utils import _cleanup_temp, _safe_open_image
             img, opened = _safe_open_image(path)
             try:
                 img.thumbnail((860, 620), Image.LANCZOS)

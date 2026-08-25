@@ -1,5 +1,5 @@
 #!/bin/bash
-# SnapSort 3.0 Mac/Linux 启动脚本
+# SnapSort 3.4.0 Mac/Linux 启动脚本
 # 自动查找可用的 Python，安装依赖，启动应用
 
 # 清除可能的环境变量污染（IDE/虚拟环境可能设置了 PYTHONHOME/PYTHONPATH）
@@ -62,7 +62,7 @@ fi
 # 检查并安装依赖
 echo "ℹ️  检查依赖..."
 NEED_INSTALL=0
-$PYTHON -c "import customtkinter" 2>/dev/null
+$PYTHON -c "import customtkinter, requests, PIL, pillow_heif, openpyxl, tkinterdnd2" 2>/dev/null
 if [ $? -ne 0 ]; then
     NEED_INSTALL=1
 else
@@ -75,9 +75,9 @@ else
 fi
 if [ "$NEED_INSTALL" -ne 0 ]; then
     echo "📦 正在安装/更新依赖..."
-    echo "   安装内容：customtkinter requests Pillow pillow-heif openpyxl"
+    echo "   安装 requirements.txt 中的完整依赖"
     echo ""
-    $PYTHON -m pip install "customtkinter>=5.2.2,<6.0.0" requests Pillow pillow-heif openpyxl
+    $PYTHON -m pip install -r requirements.txt
     INSTALL_EXIT=$?
     if [ $INSTALL_EXIT -ne 0 ]; then
         echo ""
@@ -92,7 +92,7 @@ if [ "$NEED_INSTALL" -ne 0 ]; then
         exit $INSTALL_EXIT
     fi
     # 安装后再次验证
-    $PYTHON -c "import customtkinter" 2>/dev/null
+    $PYTHON -c "import customtkinter, requests, PIL, pillow_heif, openpyxl, tkinterdnd2" 2>/dev/null
     if [ $? -ne 0 ]; then
         echo "❌ 依赖安装后仍无法导入 customtkinter"
         echo "   请手动执行：$PYTHON -m pip install customtkinter"
@@ -101,15 +101,6 @@ if [ "$NEED_INSTALL" -ne 0 ]; then
     fi
 fi
 
-# 拖拽支持（可选依赖，失败不阻塞启动）
-$PYTHON -c "import tkinterdnd2" 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "ℹ️  安装拖拽支持（tkinterdnd2，可选）..."
-    $PYTHON -m pip install tkinterdnd2 >/dev/null 2>&1
-    $PYTHON -c "import tkinterdnd2" 2>/dev/null \
-        && echo "✅ 拖拽就绪：可把文件夹直接拖进窗口" \
-        || echo "ℹ️  拖拽未启用（不影响其他功能）"
-fi
 echo "✅ 依赖已就绪"
 
 # 诊断输出
@@ -118,7 +109,7 @@ echo "   Python路径: $(command -v $PYTHON)"
 echo "   customtkinter: $CTK_VER"
 
 echo ""
-echo "🚀 正在启动 SnapSort 3.0..."
+echo "🚀 正在启动 SnapSort 3.4.0..."
 echo "===================================="
 $PYTHON app.py
 

@@ -93,8 +93,13 @@ python3 app.py
 **Q: HEIC 图片打不开？**
 依赖已含 pillow-heif，若仍失败执行 `pip install pillow-heif`。
 
-**Q: 日志在哪里？**
-`data/logs/snapsort.log`（界面日志之外的双写日志）。
+**Q: 配置、缓存和日志在哪里？**
+
+- Windows：`%LOCALAPPDATA%\SnapSort`
+- macOS：`~/Library/Application Support/SnapSort`（缓存位于 `~/Library/Caches/SnapSort`）
+- Linux：遵循 `XDG_DATA_HOME` / `XDG_CACHE_HOME`
+
+这些私人数据不会被打进安装包。
 
 ## 打包分发
 

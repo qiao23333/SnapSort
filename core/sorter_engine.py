@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """照片分类引擎：Ollama + LLaVA 本地视觉模型"""
-import os
+import hashlib
 import json
-import time
+import os
 import shutil
 import socket
+import time
 from datetime import datetime
-from pathlib import Path
 
 import requests
 
+from core import reference_manager as ref_mgr
+from core.history import HistoryManager
 from core.image_utils import encode_image, is_image_file
 from core.report import generate_csv_report
-from core.history import HistoryManager
+from core.recognition_targets import enabled_targets, targets_prompt
 from core.rule_engine import RuleEngine
-from core import reference_manager as ref_mgr
-
 
 DEFAULT_URL = "http://localhost:11434"
 # 已知视觉模型前缀（用于照片分类时筛选）
@@ -51,7 +51,7 @@ def optimize_prompt(business_context, model, url=DEFAULT_URL):
         f"用户的业务背景：{business_context}\n\n"
         "请生成一条优化后的提示词，要求：\n"
         "1. 明确告诉 AI 应该关注图片中的哪些要素（场景、人物、活动、氛围等）\n"
-        "2. 结合业务背景给出具体的分类指引（什么算工厂图、什么算负责人IP图等）\n"
+        "2. 结合业务背景给出具体的分类指引（例如工作、人物、活动、文档等）\n"
         "3. 要求 AI 按结构化格式回复（SCENE/DESC/PEOPLE/ACTION/MOOD）\n"
         "4. 控制在 200 字以内\n\n"
         "只输出优化后的提示词，不要解释。"
@@ -122,6 +122,7 @@ def ensure_model(model_name, url=DEFAULT_URL, log_callback=None):
 
     try:
         r = requests.get(f"{url}/api/tags", timeout=10)
+        r.raise_for_status()
         models = [m["name"] for m in r.json().get("models", [])]
         if model_name in models:
             return True, model_name
@@ -133,15 +134,20 @@ def ensure_model(model_name, url=DEFAULT_URL, log_callback=None):
 
         log(f"正在下载模型 {model_name}，请耐心等待...")
         r = requests.post(f"{url}/api/pull", json={"name": model_name}, stream=True, timeout=600)
+        r.raise_for_status()
+        last_status = ""
         for line in r.iter_lines():
             if line:
                 try:
                     data = json.loads(line)
+                    if data.get("error"):
+                        return False, str(data["error"])
+                    last_status = str(data.get("status", last_status))
                     if data.get("status") == "success":
                         return True, model_name
                 except Exception:
                     pass
-        return True, model_name
+        return False, f"模型下载未完成（最后状态：{last_status or '无响应'}）"
     except Exception as e:
         return False, str(e)
 
@@ -160,16 +166,11 @@ def build_keywords_map(categories):
 
     # 基础关键词，可覆盖
     base_keywords = {
-        "工厂图": ["工厂", "厂房", "仓库", "生产线", "机械", "设备", "工业", "车间", "制造",
-                   "factory", "warehouse", "industrial", "manufacturing", "plant"],
-        "人物肖像图": ["负责人", "肖像", "特写", "个人照", "形象照", "单人", "创始人",
-                         "portrait", "ceo", "founder", "headshot"],
-        "本地风景图": ["本地", "澳大利亚", "悉尼", "墨尔本", "海滩", "海岸", "歌剧院",
-                     "australia", "sydney", "melbourne", "beach", "landscape", "opera house"],
-        "办公室图": ["办公室", "办公", "会议室", "前台", "办公桌", "工位",
-                   "office", "meeting room", "desk", "workspace"],
-        "合作洽谈图": ["洽谈", "签约", "握手", "会议", "交流", "会面", "合作", "团队",
-                     "meeting", "handshake", "sign", "business", "discussion"]
+        "人物": ["人物", "肖像", "特写", "合影", "互动", "portrait", "people", "headshot"],
+        "风景": ["风景", "自然", "城市", "海滩", "建筑", "landscape", "city", "beach"],
+        "工作": ["工作", "办公室", "会议", "设备", "协作", "office", "meeting", "workspace"],
+        "生活": ["生活", "美食", "家居", "宠物", "旅行", "daily life", "food", "travel"],
+        "文档": ["文档", "截图", "表格", "票据", "文字", "document", "screenshot", "receipt"]
     }
 
     # 把配置描述中的关键词也加入
@@ -240,6 +241,7 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     known_places = config.get("known_places", []) or []
     person_recognition = config.get("person_recognition", True)
     place_recognition = config.get("place_recognition", True)
+    known_targets = enabled_targets(config)
 
     # ── 收集参考照片 ──
     # 格式: [(name, [img_path, ...]), ...]
@@ -267,8 +269,21 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
         else:
             place_text.append(pl)
 
-    use_person = person_recognition and (person_refs or person_text)
-    use_place = place_recognition and (place_refs or place_text)
+    target_refs = []
+    target_text = []
+    for target in known_targets:
+        name = target.get("name", "").strip()
+        if not name:
+            continue
+        refs = ref_mgr.get_reference_images_for_call("target", name)
+        if refs:
+            target_refs.append((name, refs))
+        else:
+            target_text.append(target)
+
+    use_person = bool(person_recognition and (person_refs or person_text))
+    use_place = bool(place_recognition and (place_refs or place_text))
+    use_targets = bool(target_refs or target_text)
 
     # ── 构建图片列表和 prompt ──
     try:
@@ -279,12 +294,18 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     images = [target_b64]           # 第 1 张 = 待分类照片
     img_labels = ["第1张：待分类照片"]
 
+    # 参考图总量设上限，防止对象越多时单次请求无限膨胀、拖慢整台电脑。
+    reference_budget = ref_mgr.MAX_TOTAL_REF_PER_CALL
+
     # 添加人物参考照片（编码结果缓存，同批任务不重复编码）
     for name, refs in person_refs:
         for rp in refs:
+            if reference_budget <= 0:
+                break
             try:
                 rb64 = encode_image_cached(rp)
                 images.append(rb64)
+                reference_budget -= 1
                 idx = len(images)
                 img_labels.append(f"第{idx}张：人物「{name}」的参考照片")
             except Exception:
@@ -293,11 +314,29 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     # 添加地点参考照片
     for name, refs in place_refs:
         for rp in refs:
+            if reference_budget <= 0:
+                break
             try:
                 rb64 = encode_image_cached(rp)
                 images.append(rb64)
+                reference_budget -= 1
                 idx = len(images)
                 img_labels.append(f"第{idx}张：地点「{name}」的参考照片")
+            except Exception:
+                pass
+
+    # 添加具体对象参考照片。模型会比较“待分类照片”和这些实例样本，
+    # 而不是只依赖名称或泛化文字描述。
+    for name, refs in target_refs:
+        for rp in refs:
+            if reference_budget <= 0:
+                break
+            try:
+                rb64 = encode_image_cached(rp)
+                images.append(rb64)
+                reference_budget -= 1
+                idx = len(images)
+                img_labels.append(f"第{idx}张：自定义对象「{name}」的参考照片")
             except Exception:
                 pass
 
@@ -324,7 +363,7 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
 
     if has_refs:
         prompt += "\n以下是图片列表：\n" + "\n".join(img_labels) + "\n"
-        prompt += "\n请对比第1张待分类照片与后续参考照片，识别其中出现的已知人物和已知地点。\n"
+        prompt += "\n请对比第1张待分类照片与后续参考照片，识别其中出现的已知人物、已知地点和具体自定义对象。\n"
 
     if use_person:
         prompt += "PERSONS: 出现的已知人物名字，逗号分隔，没有写\"无\"\n"
@@ -356,7 +395,16 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
             if lines:
                 prompt += "  仅有文字描述的地点：\n" + "\n".join(lines) + "\n"
 
-    if not use_person and not use_place:
+    if use_targets:
+        prompt += "TARGETS: 画面中出现的自定义识别目标名称，逗号分隔，没有写\"无\"\n"
+        prompt += "  需要检查的自定义目标：\n" + targets_prompt(known_targets) + "\n"
+        if target_refs:
+            prompt += "  有参考照片的具体对象：" + "、".join(
+                name for name, _ in target_refs) + "\n"
+        if target_text:
+            prompt += "  未提供参考照片的目标只能按文字说明做较弱匹配。\n"
+
+    if not use_person and not use_place and not use_targets:
         prompt += "1. 图片中有什么场景/物体/人物；2. 有多少人在做什么；3. 地点类型。请用中文回答，不超过50字。"
 
     payload = {
@@ -374,7 +422,8 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
             desc, persons, places = _parse_classify_response(
                 resp, known_persons, known_places,
                 person_recognition and use_person,
-                place_recognition and use_place)
+                place_recognition and use_place,
+                known_targets)
             category, score = match_category(desc, keywords_map)
             # 改进置信度：三维加权（关键词 0.4 + 分类匹配 0.3 + 描述长度 0.3）
             kw_conf = min(0.4, score * 0.08)
@@ -392,7 +441,8 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
         return "错误", 0.0, str(e), [], []
 
 
-def _parse_classify_response(resp, known_persons, known_places, person_on, place_on):
+def _parse_classify_response(
+        resp, known_persons, known_places, person_on, place_on, known_targets=None):
     """从模型回复中解析结构化字段。兼容旧式纯描述回复。
 
     Returns:
@@ -426,6 +476,17 @@ def _parse_classify_response(resp, known_persons, known_places, person_on, place
             parts.append(fields["PEOPLE"])
         if fields.get("ACTION") and fields["ACTION"] != "无":
             parts.append(fields["ACTION"])
+        if fields.get("TARGETS") and fields["TARGETS"] != "无":
+            raw_targets = [
+                name.strip() for name in fields["TARGETS"].replace("，", ",").split(",")
+                if name.strip()
+            ]
+            valid_targets = {
+                str(target.get("name", "")).strip() for target in (known_targets or [])
+            }
+            matched_targets = [name for name in raw_targets if name in valid_targets]
+            if matched_targets:
+                parts.append("识别目标:" + ",".join(matched_targets[:5]))
 
         # 增强描述用于关键词匹配
         desc = " ".join(parts[:4])
@@ -455,7 +516,12 @@ def classify_image_with_retry(image_path, config, url=DEFAULT_URL, max_retries=1
     if result[0] != "错误":
         return result
     # 简化配置重试（去掉人物/地点识别，减轻负载）
-    simplified = {**config, "person_recognition": False, "place_recognition": False}
+    simplified = {
+        **config,
+        "person_recognition": False,
+        "place_recognition": False,
+        "recognition_targets_enabled": False,
+    }
     result = classify_image(image_path, simplified, url)
     return result
 
@@ -476,7 +542,11 @@ def copy_to_place_folder(image_path, place_name, output_base, handle_duplicates=
 
 def copy_to_category(image_path, category, output_base, handle_duplicates="rename", move=False):
     """复制或移动图片到分类目录，处理重名。move=True 时移动原始文件。"""
-    dest_dir = os.path.join(output_base, category)
+    safe_category = str(category or "其他").strip()
+    safe_category = safe_category.replace("\\", "_").replace("/", "_")
+    safe_category = "".join("_" if ch in '<>:"|?*' else ch for ch in safe_category)
+    safe_category = safe_category.rstrip(" .") or "其他"
+    dest_dir = os.path.join(output_base, safe_category)
     os.makedirs(dest_dir, exist_ok=True)
 
     fname = os.path.basename(image_path)
@@ -518,6 +588,63 @@ def get_processed_files(output_dir):
     return processed
 
 
+_INCREMENTAL_MANIFEST = ".snapsort_incremental.json"
+
+
+def _source_signature(path):
+    stat = os.stat(path)
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _source_key(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _load_incremental_manifest(output_dir):
+    path = os.path.join(output_dir, _INCREMENTAL_MANIFEST)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data.get("files", {}) if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
+
+
+def _save_incremental_manifest(output_dir, files):
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, _INCREMENTAL_MANIFEST)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump({"version": 1, "files": files}, handle, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _content_digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _build_output_digest_index(output_dir):
+    """首次升级时按大小分组并哈希旧输出，之后改用快速清单。"""
+    by_size = {}
+    if not os.path.isdir(output_dir):
+        return by_size
+    for root, _, files in os.walk(output_dir):
+        for filename in files:
+            path = os.path.join(root, filename)
+            if not is_image_file(path):
+                continue
+            try:
+                size = os.path.getsize(path)
+                by_size.setdefault(size, set()).add(_content_digest(path))
+            except OSError:
+                continue
+    return by_size
+
+
 class SorterEngine:
     """照片分类引擎，支持后台线程运行并通过回调更新 UI"""
 
@@ -543,6 +670,7 @@ class SorterEngine:
 
     def run(self, input_dir, output_dir):
         """执行分类任务"""
+        self._stop = False
         input_dir = os.path.abspath(input_dir)
         output_dir = os.path.abspath(output_dir)
 
@@ -582,9 +710,37 @@ class SorterEngine:
             return
 
         # 3. 增量处理
-        if self.config.get("incremental", True):
-            processed = get_processed_files(output_dir)
-            new_files = [f for f in image_files if os.path.basename(f) not in processed]
+        incremental_manifest = {}
+        incremental_enabled = self.config.get("incremental", True)
+        if incremental_enabled:
+            incremental_manifest = _load_incremental_manifest(output_dir)
+            new_files = []
+            if incremental_manifest:
+                for path in image_files:
+                    try:
+                        known_signature = incremental_manifest.get(_source_key(path))
+                        if known_signature != _source_signature(path):
+                            new_files.append(path)
+                    except OSError:
+                        new_files.append(path)
+            else:
+                # 旧版本没有来源清单。首次升级只做一次内容比对，避免同名不同图
+                # 被误跳过；建立清单后，后续启动只比较轻量文件签名。
+                if os.path.isdir(output_dir):
+                    self.log("首次建立增量索引，正在核对已有输出…", "INFO")
+                output_digests = _build_output_digest_index(output_dir)
+                for path in image_files:
+                    try:
+                        signature = _source_signature(path)
+                        matches = output_digests.get(signature["size"], set())
+                        if matches and _content_digest(path) in matches:
+                            incremental_manifest[_source_key(path)] = signature
+                        else:
+                            new_files.append(path)
+                    except OSError:
+                        new_files.append(path)
+                if incremental_manifest:
+                    _save_incremental_manifest(output_dir, incremental_manifest)
             skipped = len(image_files) - len(new_files)
             if skipped > 0:
                 self.log(f"增量模式：跳过 {skipped} 张已处理图片", "INFO")
@@ -615,20 +771,30 @@ class SorterEngine:
         known_places = self.config.get("known_places", []) or []
         person_recognition = self.config.get("person_recognition", True) and bool(known_persons)
         place_recognition = self.config.get("place_recognition", True) and bool(known_places)
+        active_targets = enabled_targets(self.config)
 
         if person_recognition:
             self.log(f"👤 人物识别已开启：{len(known_persons)} 位已知人物", "INFO")
         if place_recognition:
             self.log(f"📍 地点识别已开启：{len(known_places)} 个已知地点", "INFO")
+        if active_targets:
+            self.log(f"自定义识别目标已开启：{len(active_targets)} 项", "INFO")
         if move_original:
             self.log("📦 文件处理模式：移动（分类后删除原始文件）", "WARN")
 
+        manifest_dirty = 0
         for i, img_path in enumerate(image_files, 1):
             if self._stop:
                 self.log("用户取消了分类", "WARN")
                 break
 
             fname = os.path.basename(img_path)
+            try:
+                source_key = _source_key(img_path)
+                source_signature = _source_signature(img_path)
+            except OSError:
+                source_key = None
+                source_signature = None
             if self.progress_callback:
                 self.progress_callback(i, len(image_files), fname)
 
@@ -650,15 +816,25 @@ class SorterEngine:
                 low_confidence.append((img_path, category, confidence, reason))
                 category = "待复核"
 
-            if category not in results:
-                results[category] = []
-            results[category].append((img_path, reason))
-
             try:
                 dest_path = copy_to_category(img_path, category, output_dir, handle_dup, move=move_original)
                 if dest_path is None:
-                    self.log(f"   跳过重复文件", "INFO")
+                    self.log("   跳过重复文件", "INFO")
+                    if (
+                        incremental_enabled
+                        and source_key
+                        and source_signature is not None
+                    ):
+                        incremental_manifest[source_key] = source_signature
+                        manifest_dirty += 1
                     continue
+                results.setdefault(category, []).append((dest_path, reason))
+                if incremental_enabled and source_key and source_signature is not None:
+                    incremental_manifest[source_key] = source_signature
+                    manifest_dirty += 1
+                    if manifest_dirty >= 10:
+                        _save_incremental_manifest(output_dir, incremental_manifest)
+                        manifest_dirty = 0
                 # 归档源：移动模式下从目标位置复制，复制模式下从原始位置复制
                 src_for_archive = dest_path if move_original else img_path
                 # 人物识别：额外归档到 人物库/{name}/
@@ -679,8 +855,11 @@ class SorterEngine:
                             self.log(f"地点归档失败 {pl}：{e}", "WARN")
             except Exception as e:
                 self.log(f"复制失败：{e}", "ERROR")
+                errors.append((img_path, str(e)))
 
         elapsed = time.time() - start
+        if manifest_dirty:
+            _save_incremental_manifest(output_dir, incremental_manifest)
 
         # 4. 统计与报告
         total = sum(len(items) for items in results.values()) + len(errors)

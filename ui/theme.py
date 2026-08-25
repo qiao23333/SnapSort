@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""SnapSort 主题配置 — 安静质感风格
+"""SnapSort 主题配置 — 清爽、克制的跨平台浅色主题。
 
 设计理念：
-- 主按钮用纯黑反色（参考 Polestar/沃尔沃 P 按钮逻辑）
-- 琥珀色点缀仅用于 AI 状态/活跃标签（参考录音机界面 5% 面积原则）
-- 中性灰为主，色彩克制，靠字号/字重/留白做层级
+- 黑色用于主操作，Apple 蓝用于导航、选择和进度反馈
+- 琥珀色仅用于 AI 状态，避免所有功能都挤在同一种颜色里
+- 中性灰负责背景和边界，让 Windows 与 macOS 都保持轻盈
 """
+
+import platform
+from pathlib import Path
 
 COLORS = {
     "bg": "#F5F5F7",          # 窗口背景 — 浅银灰
     "sidebar": "#FFFFFF",      # 侧边栏背景
     "card": "#FFFFFF",         # 卡片背景
-    "primary": "#1D1D1F",      # 主按钮 — 纯黑（P 按钮逻辑）
-    "primary_hover": "#3A3A3A",
-    "primary_active": "#000000",
+    "primary": "#0071E3",      # 通用交互色 — 延续旧版 Mac 的 Apple 蓝
+    "primary_hover": "#0066CC",
+    "primary_active": "#0057B8",
+    "primary_light": "#E8F4FD",
+    "action": "#1D1D1F",       # 主操作按钮 — 黑色，避免与导航状态混淆
+    "action_hover": "#333336",
     "accent": "#D97706",       # 琥珀色 — AI 状态/活跃标签专用
     "accent_hover": "#B45309",
     "accent_light": "#FEF3E2", # 琥珀色浅底
@@ -23,14 +29,17 @@ COLORS = {
     "border": "#D1D1D6",       # 边框
     "border_light": "#E8E8ED", # 浅色边框
     "success": "#34C759",      # 成功绿
+    "success_light": "#EAF8EE",
     "warning": "#D97706",      # 警告 — 与 accent 同色
     "danger": "#E0455B",       # 错误红
-    "info": "#5AC8FA",         # 信息蓝
+    "danger_light": "#FDECEF",
+    "info": "#0071E3",         # 信息蓝
     "hover": "#F2F2F7",        # hover 背景
-    "selected": "#EDEDF0",     # 选中背景 — 中性灰，不带蓝色调
+    "selected": "#E8F4FD",     # 选中背景 — 淡蓝，强化当前位置
+    "selected_text": "#0066CC",
 }
 
-import platform
+from core.paths import resource_path
 
 _PLATFORM = platform.system()
 
@@ -40,9 +49,12 @@ if _PLATFORM == "Darwin":
     _CJK = "PingFang SC"
     _MONO = "SF Mono"
 elif _PLATFORM == "Windows":
-    _SANS = "Segoe UI"
-    _SANS_TEXT = "Segoe UI"
-    _CJK = "Microsoft YaHei"
+    # Tk 不支持 CSS 式字体回退列表。界面以中文为主，因此直接使用
+    # Windows 自带的 UI 字体，避免 Segoe UI → 微软雅黑临时回退造成
+    # 同一行基线、字重和行高不一致。
+    _SANS = "Microsoft YaHei UI"
+    _SANS_TEXT = "Microsoft YaHei UI"
+    _CJK = "Microsoft YaHei UI"
     _MONO = "Cascadia Code"
 else:
     _SANS = "Noto Sans"
@@ -77,16 +89,29 @@ def font_safe(size=13, weight="normal"):
     return (_SANS, size, weight)
 
 
+def font_mono(size=12, weight="normal"):
+    """日志、代码和固定宽度数据使用的平台原生等宽字体。"""
+    return (_MONO, size, weight)
+
+
 # 通用样式配置（用于 customtkinter）
-def apply_root_theme(root):
+def apply_root_theme(root, selected_icon=None):
     root.configure(fg_color=COLORS["bg"])
     try:
-        import os
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "snapsort_icon.png")
-        if os.path.exists(icon_path):
-            from PIL import ImageTk
-            icon = ImageTk.PhotoImage(file=icon_path)
-            root.iconphoto(True, icon)
+        icon_path = Path(selected_icon) if selected_icon else resource_path(
+            "data", "snapsort_icon.png")
+        if icon_path.exists():
+            from PIL import Image, ImageTk
+
+            with Image.open(icon_path) as opened:
+                source = opened.convert("RGBA")
+            icons = [
+                ImageTk.PhotoImage(source.resize((size, size), Image.Resampling.LANCZOS))
+                for size in (16, 24, 32, 48, 64, 128, 256)
+            ]
+            root.iconphoto(True, *icons)
+            # Tk 必须持有引用，否则图片会被垃圾回收，标题栏会退回默认图标。
+            root._snapsort_icon_images = icons
     except Exception:
         pass
 
@@ -108,18 +133,18 @@ def sidebar_button_style():
 def sidebar_button_active_style():
     style = sidebar_button_style()
     style["fg_color"] = COLORS["selected"]
-    style["text_color"] = COLORS["text"]
+    style["text_color"] = COLORS["selected_text"]
     style["hover_color"] = COLORS["selected"]
     style["font"] = font_safe(14, "bold")
     return style
 
 
 def primary_button_style():
-    """主按钮 — 纯黑底白字，P 按钮反色逻辑"""
+    """主按钮 — 黑底白字；蓝色只负责导航、进度和链接状态。"""
     return {
         "corner_radius": 12,
-        "fg_color": COLORS["primary"],
-        "hover_color": COLORS["primary_hover"],
+        "fg_color": COLORS["action"],
+        "hover_color": COLORS["action_hover"],
         "text_color": "white",
         "font": font_safe(13, "bold"),
         "height": 38,
@@ -162,7 +187,7 @@ def card_frame_style():
 
 
 def segmented_button_style(active=False):
-    """分段按钮 — 活跃态用黑色，非活跃态用白底"""
+    """分段按钮 — 活跃态用主色，非活跃态用白底。"""
     return {
         "width": 120,
         "height": 32,

@@ -5,8 +5,7 @@ import os
 
 from PIL import Image
 
-from core.image_utils import (encode_image, _cleanup_temp, is_image_file,
-                              format_size)
+from core.image_utils import _cleanup_temp, encode_image, format_size, is_image_file
 
 
 def _mkimg(path, color=(10, 120, 220)):
@@ -24,7 +23,8 @@ def test_encode_image_roundtrip(tmp_path):
 def test_encode_downscales_large(tmp_path):
     p = str(tmp_path / "big.png")
     Image.new("RGB", (4000, 3000), "red").save(p)
-    import base64, io
+    import base64
+    import io
     raw = base64.b64decode(encode_image(p))
     img = Image.open(io.BytesIO(raw))
     assert max(img.size) <= 1600, "长边应被压到 1600 以内"

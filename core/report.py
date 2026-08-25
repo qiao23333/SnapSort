@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """报告生成：CSV / Excel"""
-import os
 import csv
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +11,9 @@ def generate_csv_report(results, output_dir):
     """生成 CSV 分类报告
     results: {category: [(img_path, reason), ...]}
     """
-    report_path = Path(output_dir) / f"分类报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / f"分类报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     with open(report_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["序号", "文件名", "分类结果", "分类原因", "原路径"])
@@ -27,12 +29,14 @@ def generate_excel_report(results, output_dir):
     """生成 Excel 分类报告（需要 openpyxl）"""
     try:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Alignment, Font, PatternFill
     except ImportError:
         # 未安装 openpyxl 时回退到 CSV
         return generate_csv_report(results, output_dir)
 
-    report_path = Path(output_dir) / f"分类报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / f"分类报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "分类结果"
