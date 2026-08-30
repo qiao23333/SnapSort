@@ -1,5 +1,5 @@
 #!/bin/bash
-# SnapSort macOS 打包脚本 (v3.4.0)
+# SnapSort macOS 打包脚本 (v3.7.0)
 # 生成 SnapSort.app，双击即可运行
 
 set -e
@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "========================================"
-echo "  SnapSort macOS 打包脚本 (v3.4.0)"
+echo "  SnapSort macOS 打包脚本 (v3.7.0)"
 echo "========================================"
 echo
 

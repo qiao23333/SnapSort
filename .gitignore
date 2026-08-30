@@ -4,6 +4,10 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+/.pytest_cache/
+/.ruff_cache/
+.coverage
+htmlcov/
 
 # 运行时数据与缓存
 data/*
@@ -21,6 +25,8 @@ data/*
 dist/
 build/
 *.zip
+*.msi
+*.exe
 *.spec.bak
 
 # 系统文件

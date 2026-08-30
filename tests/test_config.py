@@ -60,11 +60,42 @@ def test_corrupt_file_does_not_crush_load(tmp_path):
         raise AssertionError("损坏的配置文件不应让程序崩溃（load 应处理异常）")
 
 
+def test_valid_json_with_invalid_root_falls_back_to_defaults(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text("[]", encoding="utf-8")
+
+    cm = ConfigManager(str(p))
+
+    assert cm.get("model") == DEFAULT_CONFIG["model"]
+    assert list(tmp_path.glob("config.json.corrupt.*"))
+
+
+def test_invalid_nested_section_is_repaired_and_persisted(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"model": "llava:7b", "output": None}), encoding="utf-8")
+
+    cm = ConfigManager(str(p))
+
+    assert cm.get("model") == "llava:7b"
+    assert cm.get("output") == DEFAULT_CONFIG["output"]
+    assert json.loads(p.read_text(encoding="utf-8"))["output"] == DEFAULT_CONFIG["output"]
+
+
+def test_invalid_recognition_targets_type_is_repaired(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"recognition_targets": 123}), encoding="utf-8")
+
+    cm = ConfigManager(str(p))
+
+    assert cm.get("recognition_targets") == DEFAULT_CONFIG["recognition_targets"]
+    persisted = json.loads(p.read_text(encoding="utf-8"))
+    assert persisted["recognition_targets"] == DEFAULT_CONFIG["recognition_targets"]
+
+
 def test_defaults_are_generic_and_privacy_first():
-    serialized = json.dumps(DEFAULT_CONFIG, ensure_ascii=False)
-    assert "通用业务" not in serialized
-    assert "人物肖像" not in serialized
     assert DEFAULT_CONFIG["business_context"] == ""
+    assert DEFAULT_CONFIG["business_context_enabled"] is False
+    assert set(DEFAULT_CONFIG["categories"]) == {"人物", "风景", "工作", "生活", "文档"}
     assert DEFAULT_CONFIG["person_recognition"] is False
     assert DEFAULT_CONFIG["place_recognition"] is False
 

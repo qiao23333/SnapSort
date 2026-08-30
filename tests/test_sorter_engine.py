@@ -15,6 +15,7 @@ from core.sorter_engine import (
     _source_signature,
     build_keywords_map,
     classify_image,
+    collect_known_context,
     copy_to_category,
     encode_image_cached,
     ensure_model,
@@ -24,6 +25,31 @@ from core.sorter_engine import (
 def _mkimg(path, color=(200, 30, 30)):
     Image.new("RGB", (64, 64), color).save(path)
     return path
+
+
+def test_collect_known_context_respects_switches_and_reference_types(monkeypatch):
+    def fake_refs(ref_type, name):
+        return [f"{ref_type}-{name}.jpg"] if name in {"小乔", "会议室"} else []
+
+    monkeypatch.setattr(
+        "core.sorter_engine.ref_mgr.get_reference_images_for_call", fake_refs)
+    context = collect_known_context({
+        "known_persons": [{"name": "小乔", "description": "短发"}],
+        "known_places": [{"name": "会议室", "description": "蓝色背景墙"}],
+        "person_recognition": True,
+        "place_recognition": False,
+        "recognition_targets_enabled": True,
+        "recognition_targets": [{
+            "name": "工作证", "description": "蓝色卡套", "enabled": True,
+        }],
+    })
+
+    assert context["person_refs"] == [("小乔", ["person-小乔.jpg"])]
+    assert context["place_refs"] == [("会议室", ["place-会议室.jpg"])]
+    assert context["target_text"][0]["name"] == "工作证"
+    assert context["use_person"] is True
+    assert context["use_place"] is False
+    assert context["use_targets"] is True
 
 
 def test_keywords_cache_hit():
@@ -101,6 +127,37 @@ def test_custom_object_reference_is_sent_to_visual_model(tmp_path, monkeypatch):
     assert len(captured["images"]) == 2
     assert "自定义对象「红色杯子」的参考照片" in captured["prompt"]
     assert "识别目标:红色杯子" in result[2]
+
+
+def test_optimized_prompt_requires_business_context_opt_in(tmp_path, monkeypatch):
+    candidate = _mkimg(str(tmp_path / "candidate.png"))
+    prompts = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"response": "SCENE: 其他\nDESC: 普通照片"}
+
+    def fake_post(_url, json, timeout):
+        prompts.append(json["prompt"])
+        return Response()
+
+    monkeypatch.setattr("core.sorter_engine.requests.post", fake_post)
+    base = {
+        "categories": {"其他": "普通"},
+        "model": "llava:7b",
+        "optimized_prompt": "优先寻找机密业务场景",
+        "known_persons": [], "known_places": [],
+        "recognition_targets_enabled": False,
+        "recognition_targets": [],
+    }
+
+    classify_image(candidate, {**base, "business_context_enabled": False})
+    classify_image(candidate, {**base, "business_context_enabled": True})
+
+    assert "优先寻找机密业务场景" not in prompts[0]
+    assert "优先寻找机密业务场景" in prompts[1]
 
 
 def test_category_cannot_escape_output_folder(tmp_path):

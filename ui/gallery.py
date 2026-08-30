@@ -33,7 +33,10 @@ def _get_cached_thumbnail(image_path, size=(130, 130)):
         cache_file = _thumb_cache_dir() / f"{cache_key}.png"
 
         if cache_file.exists():
-            return Image.open(cache_file)
+            # 缓存图片要在线程内完整读入并关闭文件，避免把延迟读取的
+            # Image 对象交给 Tk 主线程后仍占用文件句柄。
+            with Image.open(cache_file) as cached:
+                return cached.copy()
 
         # 生成新缩略图
         thumb = make_thumbnail(image_path, size=size)
@@ -51,6 +54,9 @@ class GalleryPage(ctk.CTkFrame):
         self.configure(fg_color=COLORS["bg"])
         self.thumbnails = []
         self._cancel_flag = threading.Event()
+        self._refresh_token = 0
+        self._loaded_key = None
+        self._loaded_signature = None
         self._load_thread = None
         self._preview_window = None
         self._built = False
@@ -103,6 +109,49 @@ class GalleryPage(ctk.CTkFrame):
     def _on_category_change(self, choice):
         self.refresh()
 
+    def on_show(self):
+        """首次进入或浏览条件变化时刷新，普通往返切页复用现有结果。"""
+        current_key = (self.app.output_var.get().strip(), self.category_var.get())
+        current_signature = self._browse_signature(*current_key)
+        if (current_key != self._loaded_key
+                or current_signature != self._loaded_signature):
+            self.refresh()
+
+    @staticmethod
+    def _browse_signature(output_dir, selected_cat):
+        """用少量目录元数据判断素材库是否变化，不遍历图片文件。"""
+        base = Path(output_dir)
+        if selected_cat != "全部":
+            base = base / selected_cat
+        if not base.is_dir():
+            return None
+
+        dirs = [base]
+        try:
+            if selected_cat == "全部":
+                first_level = [entry for entry in base.iterdir() if entry.is_dir()]
+                dirs.extend(first_level)
+                # “全部”下的人物/地点通常还有一层命名目录；读取目录本身
+                # 的 mtime 即可发现新增图片，无需扫描其中每个文件。
+                for folder in first_level:
+                    if folder.name in ("人物库", "地点库"):
+                        dirs.extend(
+                            entry for entry in folder.iterdir() if entry.is_dir()
+                        )
+            elif selected_cat in ("人物库", "地点库"):
+                dirs.extend(entry for entry in base.iterdir() if entry.is_dir())
+        except OSError:
+            return None
+
+        signature = []
+        for folder in dirs:
+            try:
+                stat = folder.stat()
+                signature.append((str(folder), stat.st_mtime_ns))
+            except OSError:
+                return None
+        return tuple(signature)
+
     def clear_cache(self):
         """清空缩略图磁盘缓存"""
         cache = _thumb_cache_dir()
@@ -121,20 +170,25 @@ class GalleryPage(ctk.CTkFrame):
         if not self._built:
             return
 
-        # 取消旧任务
+        # 取消旧任务，但绝不在 Tk 主线程等待后台扫描结束。代次标记会让
+        # 已来不及取消的旧回调自动失效。
+        self._refresh_token += 1
+        refresh_token = self._refresh_token
         self._cancel_flag.set()
-        if self._load_thread and self._load_thread.is_alive():
-            self._load_thread.join(timeout=0.5)
         for f in self._thumb_futures:
             f.cancel()
         self._thumb_futures.clear()
-        self._cancel_flag.clear()
+        self._cancel_flag = threading.Event()
+        cancel_flag = self._cancel_flag
 
         for widget in self.gallery_scroll.winfo_children():
             widget.destroy()
         self.thumbnails.clear()
 
-        output_dir = self.app.output_var.get()
+        output_dir = self.app.output_var.get().strip()
+        selected_cat = self.category_var.get()
+        self._loaded_key = (output_dir, selected_cat)
+        self._loaded_signature = self._browse_signature(output_dir, selected_cat)
         if not os.path.isdir(output_dir):
             ctk.CTkLabel(self.gallery_scroll, text="输出文件夹不存在，请先运行自动分类",
                          font=font_safe(13, "normal"),
@@ -143,16 +197,23 @@ class GalleryPage(ctk.CTkFrame):
             return
 
         self.info_label.configure(text="正在扫描...")
-        self._load_thread = threading.Thread(target=self._collect_images, args=(output_dir,), daemon=True)
+        self._load_thread = threading.Thread(
+            target=self._collect_images,
+            args=(output_dir, selected_cat, refresh_token, cancel_flag),
+            daemon=True,
+        )
         self._load_thread.start()
 
-    def _collect_images(self, output_dir):
-        selected_cat = self.category_var.get()
+    def _collect_images(self, output_dir, selected_cat, refresh_token, cancel_flag):
         images = []
 
         if selected_cat == "全部":
             for root, _, files in os.walk(output_dir):
+                if cancel_flag.is_set():
+                    return
                 for f in files:
+                    if cancel_flag.is_set():
+                        return
                     path = os.path.join(root, f)
                     if is_image_file(path):
                         images.append(path)
@@ -162,24 +223,37 @@ class GalleryPage(ctk.CTkFrame):
                 # 人物库/地点库 有子目录（按人物/地点分），需要递归扫描
                 if selected_cat in ("人物库", "地点库"):
                     for root, _, files in os.walk(cat_dir):
+                        if cancel_flag.is_set():
+                            return
                         for f in files:
+                            if cancel_flag.is_set():
+                                return
                             path = os.path.join(root, f)
                             if is_image_file(path):
                                 images.append(path)
                 else:
                     for f in os.listdir(cat_dir):
+                        if cancel_flag.is_set():
+                            return
                         path = os.path.join(cat_dir, f)
                         if is_image_file(path):
                             images.append(path)
 
-        self._safe_after(lambda: self._start_render(images))
+        if not cancel_flag.is_set():
+            self._safe_after(
+                lambda: self._start_render(images, refresh_token, cancel_flag)
+            )
 
     def _safe_after(self, callback):
         """安全地在主线程执行回调（窗口已关闭则不执行）"""
         from ui.widgets import safe_after
         safe_after(self, callback)
 
-    def _start_render(self, images):
+    def _start_render(self, images, refresh_token=None, cancel_flag=None):
+        refresh_token = self._refresh_token if refresh_token is None else refresh_token
+        cancel_flag = self._cancel_flag if cancel_flag is None else cancel_flag
+        if refresh_token != self._refresh_token or cancel_flag.is_set():
+            return
         if not images:
             ctk.CTkLabel(self.gallery_scroll, text=f"「{self.category_var.get()}」暂无图片",
                          font=font_safe(13, "normal"),
@@ -196,30 +270,42 @@ class GalleryPage(ctk.CTkFrame):
 
         self._pending_images = images[:300]
         self._rendered_count = 0
-        self._render_batch()
+        self._render_batch(refresh_token=refresh_token, cancel_flag=cancel_flag)
 
-    def _render_batch(self, batch_size=12):
-        if self._cancel_flag.is_set():
+    def _render_batch(self, batch_size=12, refresh_token=None, cancel_flag=None):
+        refresh_token = self._refresh_token if refresh_token is None else refresh_token
+        cancel_flag = self._cancel_flag if cancel_flag is None else cancel_flag
+        if refresh_token != self._refresh_token or cancel_flag.is_set():
             return
 
         batch = self._pending_images[:batch_size]
         self._pending_images = self._pending_images[batch_size:]
 
         for path in batch:
-            if self._cancel_flag.is_set():
+            if refresh_token != self._refresh_token or cancel_flag.is_set():
                 return
-            self._create_thumbnail_widget(self._grid, path, self._rendered_count)
+            self._create_thumbnail_widget(
+                self._grid, path, self._rendered_count, refresh_token, cancel_flag
+            )
             self._rendered_count += 1
 
         remaining = len(self._pending_images)
         self.info_label.configure(text=f"共 {self._rendered_count + remaining} 张")
 
         if remaining > 0:
-            self.app.root.after(30, self._render_batch)
+            self.app.root.after(
+                30,
+                lambda: self._render_batch(
+                    refresh_token=refresh_token, cancel_flag=cancel_flag
+                ),
+            )
         else:
             self.info_label.configure(text=f"共 {self._rendered_count} 张")
 
-    def _create_thumbnail_widget(self, parent, path, index):
+    def _create_thumbnail_widget(self, parent, path, index,
+                                 refresh_token=None, cancel_flag=None):
+        refresh_token = self._refresh_token if refresh_token is None else refresh_token
+        cancel_flag = self._cancel_flag if cancel_flag is None else cancel_flag
         row, col = divmod(index, 4)
 
         frame = ctk.CTkFrame(parent, fg_color=COLORS["card"], corner_radius=8,
@@ -245,18 +331,23 @@ class GalleryPage(ctk.CTkFrame):
 
         # 后台加载缩略图（带磁盘缓存，线程池限流；PhotoImage 必须在主线程创建）
         def _load_thumb(path=path, frame=frame):
-            if self._cancel_flag.is_set():
+            if refresh_token != self._refresh_token or cancel_flag.is_set():
                 return
             thumb = _get_cached_thumbnail(path, size=(130, 130))
             if thumb is not None:
                 self._safe_after(lambda f=frame, t=thumb, pa=path:
-                                 self._set_thumb(f, t, pa))
+                                 self._set_thumb(
+                                     f, t, pa, refresh_token, cancel_flag
+                                 ))
 
         future = self._thumb_executor.submit(_load_thumb)
         self._thumb_futures.append(future)
 
-    def _set_thumb(self, frame, thumb, path):
-        if self._cancel_flag.is_set():
+    def _set_thumb(self, frame, thumb, path,
+                   refresh_token=None, cancel_flag=None):
+        refresh_token = self._refresh_token if refresh_token is None else refresh_token
+        cancel_flag = self._cancel_flag if cancel_flag is None else cancel_flag
+        if refresh_token != self._refresh_token or cancel_flag.is_set():
             return
         try:
             photo = ImageTk.PhotoImage(thumb)

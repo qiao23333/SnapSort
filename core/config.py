@@ -78,6 +78,7 @@ DEFAULT_CONFIG = {
         }
     },
     "active_tag_preset": "默认ABC",
+    "business_context_enabled": False,
     "business_context": "",
     "optimized_prompt": "",
     "min_photos_per_event": 2,
@@ -122,21 +123,50 @@ class ConfigManager:
                 config = _fresh_defaults()
                 self.save(config)
                 return config
+            # JSON 语法正确并不代表结构可用。手工编辑、旧版本或同步冲突
+            # 可能把整个配置/嵌套区块写成列表、字符串或 null；继续按字典
+            # 合并会让应用在启动阶段直接崩溃。
+            if not isinstance(config, dict):
+                try:
+                    shutil.copy2(self.config_path,
+                                 str(self.config_path) + f".corrupt.{int(time.time())}")
+                except OSError:
+                    pass
+                config = _fresh_defaults()
+                self.save(config)
+                return config
             # 合并默认值，防止升级后缺字段
+            changed = False
             for k, v in DEFAULT_CONFIG.items():
                 if k not in config:
                     config[k] = deepcopy(v)
-                elif isinstance(v, dict) and k in config:
+                    changed = True
+                elif isinstance(v, dict):
+                    if not isinstance(config[k], dict):
+                        config[k] = deepcopy(v)
+                        changed = True
+                        continue
                     for sub_k, sub_v in v.items():
                         if sub_k not in config[k]:
                             config[k][sub_k] = deepcopy(sub_v)
+                            changed = True
+                elif isinstance(v, list) and not isinstance(config[k], list):
+                    config[k] = deepcopy(v)
+                    changed = True
             # 3.5.0 曾短暂加入三个纯文字的泛化目标；它们不符合“用参考图
             # 教 AI 认识具体对象”的产品定义。仅在列表仍完全等于旧默认时迁移，
             # 避免覆盖用户已经自行编辑过的内容。
             targets = config.get("recognition_targets", []) or []
+            if (not isinstance(targets, list)
+                    or any(not isinstance(item, dict) for item in targets)):
+                targets = deepcopy(DEFAULT_RECOGNITION_TARGETS)
+                config["recognition_targets"] = targets
+                changed = True
             if ({str(item.get("name", "")) for item in targets}
                     == LEGACY_GENERIC_TARGET_NAMES and len(targets) == 3):
                 config["recognition_targets"] = deepcopy(DEFAULT_RECOGNITION_TARGETS)
+                changed = True
+            if changed:
                 self.save(config)
             return config
         config = _fresh_defaults()

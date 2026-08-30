@@ -364,17 +364,31 @@ class AutoSortPage(ctk.CTkFrame):
         self._update_pattern_preview()
         ctk.CTkLabel(card, text="", height=4).pack()  # spacer
 
-        # ═══ 2. 业务背景（可折叠）═══
+        # ═══ 2. 业务背景（可选、可折叠）═══
         self._ctx_collapsed = ctk.BooleanVar(value=False)
         ctx_header = ctk.CTkFrame(card, fg_color="transparent")
         ctx_header.pack(fill="x", padx=20, pady=(4, 0))
-        ctk.CTkLabel(ctx_header, text="业务背景（折叠）", font=font_safe(12),
-                     text_color=COLORS["text_secondary"]).pack(side="left")
+        self.ctx_enabled_var = ctk.BooleanVar(
+            value=bool(self.app.config_manager.get(
+                "business_context_enabled", False)))
+        ctk.CTkCheckBox(
+            ctx_header,
+            text="启用业务背景（可选）",
+            variable=self.ctx_enabled_var,
+            command=self._sync_context_state,
+            font=font_safe(12, "bold"),
+            text_color=COLORS["text"],
+        ).pack(side="left")
         ctk.CTkButton(ctx_header, text="▸ 展开", command=self._toggle_ctx, width=70, height=24,
                       font=font_safe(11), fg_color="transparent",
                       text_color=COLORS["primary"],
                       hover_color=COLORS["hover"]).pack(side="left", padx=(8, 0))
         self._ctx_expand_btn = ctx_header.winfo_children()[-1]
+        self.ctx_effect_label = ctk.CTkLabel(
+            card,
+            text="只影响 AI 事件命名和照片标签/等级，不影响事件分组。",
+            font=font_safe(10), text_color=COLORS["text_secondary"], anchor="w")
+        self.ctx_effect_label.pack(fill="x", padx=20, pady=(2, 0))
         self.ctx_text = ctk.CTkTextbox(card, height=60, font=("SF Pro Text", 12),
                                         fg_color=COLORS["bg"],
                                         border_color=COLORS["border"], border_width=1)
@@ -407,6 +421,7 @@ class AutoSortPage(ctk.CTkFrame):
         # 默认折叠
         self.ctx_text.pack_forget()
         self.opt_prompt_row.pack_forget()
+        self._sync_context_state()
 
         # ═══ 3. 操作按钮（醒目）═══
         btn_card = ctk.CTkFrame(p, **card_frame_style())
@@ -575,8 +590,26 @@ class AutoSortPage(ctk.CTkFrame):
             self.opt_prompt_row.pack(fill="x", padx=20, pady=(0, 8))
             self._ctx_expand_btn.configure(text="▾ 折叠")
 
+    def _sync_context_state(self):
+        """业务背景默认关闭；关闭时保留文字，但不传给任何 AI 请求。"""
+        enabled = bool(self.ctx_enabled_var.get())
+        state = "normal" if enabled else "disabled"
+        self.ctx_text.configure(state=state)
+        self.opt_prompt_btn.configure(state=state)
+        if not enabled:
+            self.opt_prompt_status.configure(
+                text="未启用", text_color=COLORS["text_secondary"])
+        elif self.app.config_manager.get("optimized_prompt", ""):
+            self.opt_prompt_status.configure(
+                text="内容分类已有优化提示词", text_color=COLORS["success"])
+        else:
+            self.opt_prompt_status.configure(text="")
+
     def _optimize_prompt(self):
         """用 AI 优化业务背景为分类提示词。"""
+        if not self.ctx_enabled_var.get():
+            messagebox.showwarning("提示", "请先启用业务背景")
+            return
         ctx = self.ctx_text.get("1.0", "end-1c").strip()
         if not ctx:
             messagebox.showwarning("提示", "请先输入业务背景")
@@ -591,6 +624,8 @@ class AutoSortPage(ctk.CTkFrame):
             def _done():
                 self.opt_prompt_btn.configure(state="normal", text="AI 优化提示词")
                 if ok:
+                    self.ctx_enabled_var.set(True)
+                    self.app.config_manager.set("business_context_enabled", True)
                     self.app.config_manager.set("optimized_prompt", result)
                     self.app.config_manager.set("business_context", ctx)
                     self.opt_prompt_status.configure(
@@ -599,7 +634,7 @@ class AutoSortPage(ctk.CTkFrame):
                     self._log(f"✨ 提示词优化完成：{result[:60]}...")
                     messagebox.showinfo("优化完成",
                         f"AI 已将业务背景优化为分类提示词：\n\n{result[:200]}...\n\n"
-                        f"后续分类将使用此优化提示词。\n"
+                        f"按内容分类会使用优化提示词；事件模式使用上面的业务背景原文。\n"
                         f"可在业务背景区域重新输入并再次优化。")
                 else:
                     self.opt_prompt_status.configure(
@@ -821,13 +856,16 @@ class AutoSortPage(ctk.CTkFrame):
         model = self.model_var.get()
         grade_enabled = self.evt_grade_ck.get()
         rename = self.evt_rename_ck.get()
-        ctx = self.ctx_text.get("1.0", "end-1c").strip()
+        raw_ctx = self.ctx_text.get("1.0", "end-1c").strip()
+        ctx_enabled = bool(self.ctx_enabled_var.get())
+        ctx = raw_ctx if ctx_enabled else ""
 
         self._hide_undo_button()  # 上一轮的撤销入口失效
 
         os.makedirs(out, exist_ok=True)
         self.app.config_manager.set("model", model)
-        self.app.config_manager.set("business_context", ctx)
+        self.app.config_manager.set("business_context_enabled", ctx_enabled)
+        self.app.config_manager.set("business_context", raw_ctx)
 
         # 保存自定义命名规则
         rename_pattern = self.evt_pattern_var.get().strip()
@@ -868,9 +906,8 @@ class AutoSortPage(ctk.CTkFrame):
         self._log(f"🤖 开始分析 — {model}")
         if ctx:
             self._log(f"   业务背景: {ctx[:50]}...")
-        opt_p = self.app.config_manager.get("optimized_prompt", "")
-        if opt_p:
-            self._log(f"   ✨ 使用 AI 优化提示词（{len(opt_p)}字）")
+        if not ctx_enabled:
+            self._log("   业务背景: 未启用（使用通用判断）")
         if tag_preset:
             tags_str = ", ".join(t["name"] for t in tag_preset.get("tags", []))
             multi = "多标签" if tag_preset.get("multi_tag") else "单标签"

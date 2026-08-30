@@ -4,7 +4,12 @@
 import os
 from datetime import datetime, timedelta
 
-from core.event_classifier import BatchRenamer, Checkpoint, group_by_time_interval
+from core.event_classifier import (
+    BatchRenamer,
+    Checkpoint,
+    get_datetime_info,
+    group_by_time_interval,
+)
 
 
 def _make_photo(tmp_path, dt, name):
@@ -34,6 +39,15 @@ def test_gap_splits_events(tmp_path):
     groups = group_by_time_interval(photos, gap_hours=4)
     assert len(groups) == 2
     assert "2026-08-01" in groups and "2026-08-01_2" in groups
+
+
+def test_missing_exif_reports_file_mtime_as_low_confidence(tmp_path):
+    photo = _make_photo(tmp_path, datetime(2026, 8, 30, 9, 0), "forwarded.jpg")
+
+    captured_at, source = get_datetime_info(photo)
+
+    assert captured_at == datetime(2026, 8, 30, 9, 0)
+    assert source == "file_mtime"
 
 
 def test_default_name_pattern():

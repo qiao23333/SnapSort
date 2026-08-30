@@ -1,4 +1,4 @@
-# Windows 打包与分发指南 (v3.4)
+# Windows 打包与分发指南 (v3.7)
 
 > 将 SnapSort 打包为 Windows 下可双击运行的 `.exe` 程序，方便分发给同事或客户。
 
@@ -116,7 +116,7 @@ A:
 A: 正常。PyInstaller 打包了 Python 运行时和依赖，当前构建约 70MB，后续会随依赖变化。使用 `--onedir`（spec 默认）比 `--onefile` 启动快。
 
 **Q: 界面打不开，提示 tkinter 错误？**
-A: v3.4 的 exe 打包已包含 tkinter。如果使用源码模式（run.bat），需要确保 Python 安装时勾选了 tcl/tk。
+A: v3.7 的 exe 打包已包含 tkinter。如果使用源码模式（run.bat），需要确保 Python 安装时勾选了 tcl/tk。
 
 **Q: 模型列表为空？**
 A: 说明 Ollama 未运行或未安装模型。先安装 Ollama 并 `ollama pull llava:13b`。

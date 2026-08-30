@@ -227,6 +227,54 @@ def match_category(desc, keywords_map):
     return best_match, max_score
 
 
+def collect_known_context(config):
+    """收集已启用的已知人物、地点和对象及其参考照片。
+
+    这里只整理本地配置和参考照片路径，不编码图片、不调用模型。这样自动
+    分类和工具箱可以共享完全相同的启用规则，同时避免仅为了刷新界面就
+    触发昂贵操作。
+    """
+    known_persons = config.get("known_persons", []) or []
+    known_places = config.get("known_places", []) or []
+    known_targets = enabled_targets(config)
+
+    def _split(items, ref_type):
+        refs, text_only = [], []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            images = ref_mgr.get_reference_images_for_call(ref_type, name)
+            if images:
+                refs.append((name, images))
+            else:
+                text_only.append(item)
+        return refs, text_only
+
+    person_refs, person_text = _split(known_persons, "person")
+    place_refs, place_text = _split(known_places, "place")
+    target_refs, target_text = _split(known_targets, "target")
+
+    return {
+        "known_persons": known_persons,
+        "known_places": known_places,
+        "known_targets": known_targets,
+        "person_refs": person_refs,
+        "person_text": person_text,
+        "place_refs": place_refs,
+        "place_text": place_text,
+        "target_refs": target_refs,
+        "target_text": target_text,
+        "use_person": bool(config.get("person_recognition", True)
+                           and (person_refs or person_text)),
+        "use_place": bool(config.get("place_recognition", True)
+                          and (place_refs or place_text)),
+        "use_targets": bool(target_refs or target_text),
+    }
+
+
 def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     """调用本地视觉模型获取描述并分类，返回 (category, score, reason, persons, places)。
 
@@ -237,53 +285,19 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
     """
     categories = config.get("categories", {})
     keywords_map = build_keywords_map(categories)
-    known_persons = config.get("known_persons", []) or []
-    known_places = config.get("known_places", []) or []
-    person_recognition = config.get("person_recognition", True)
-    place_recognition = config.get("place_recognition", True)
-    known_targets = enabled_targets(config)
-
-    # ── 收集参考照片 ──
-    # 格式: [(name, [img_path, ...]), ...]
-    person_refs = []   # 有参考照片的人物
-    person_text = []   # 仅有文字描述的人物（无参考照片）
-    for p in known_persons:
-        name = p.get("name", "").strip()
-        if not name:
-            continue
-        refs = ref_mgr.get_reference_images_for_call("person", name)
-        if refs:
-            person_refs.append((name, refs))
-        else:
-            person_text.append(p)
-
-    place_refs = []
-    place_text = []
-    for pl in known_places:
-        name = pl.get("name", "").strip()
-        if not name:
-            continue
-        refs = ref_mgr.get_reference_images_for_call("place", name)
-        if refs:
-            place_refs.append((name, refs))
-        else:
-            place_text.append(pl)
-
-    target_refs = []
-    target_text = []
-    for target in known_targets:
-        name = target.get("name", "").strip()
-        if not name:
-            continue
-        refs = ref_mgr.get_reference_images_for_call("target", name)
-        if refs:
-            target_refs.append((name, refs))
-        else:
-            target_text.append(target)
-
-    use_person = bool(person_recognition and (person_refs or person_text))
-    use_place = bool(place_recognition and (place_refs or place_text))
-    use_targets = bool(target_refs or target_text)
+    context = collect_known_context(config)
+    known_persons = context["known_persons"]
+    known_places = context["known_places"]
+    known_targets = context["known_targets"]
+    person_refs = context["person_refs"]
+    person_text = context["person_text"]
+    place_refs = context["place_refs"]
+    place_text = context["place_text"]
+    target_refs = context["target_refs"]
+    target_text = context["target_text"]
+    use_person = context["use_person"]
+    use_place = context["use_place"]
+    use_targets = context["use_targets"]
 
     # ── 构建图片列表和 prompt ──
     try:
@@ -345,7 +359,8 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
 
     # 优先使用优化后的提示词
     optimized = config.get("optimized_prompt", "")
-    if optimized and optimized.strip():
+    context_enabled = bool(config.get("business_context_enabled", False))
+    if context_enabled and optimized and optimized.strip():
         prompt = optimized.strip() + "\n\n"
         prompt += "严格按以下格式回复（每项一行，不要额外文字）：\n"
         prompt += "SCENE: 场景类型(工厂/办公室/户外/会议/社交/其他)\n"
@@ -421,8 +436,8 @@ def classify_image(image_path, config, url=DEFAULT_URL, log_callback=None):
             resp = r.json().get("response", "").strip()
             desc, persons, places = _parse_classify_response(
                 resp, known_persons, known_places,
-                person_recognition and use_person,
-                place_recognition and use_place,
+                use_person,
+                use_place,
                 known_targets)
             category, score = match_category(desc, keywords_map)
             # 改进置信度：三维加权（关键词 0.4 + 分类匹配 0.3 + 描述长度 0.3）

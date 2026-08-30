@@ -16,7 +16,12 @@ from send2trash import send2trash
 from core.image_utils import bitmap_to_vector_svg, encode_image, is_image_file
 from core.model_info import get_model_hint, get_model_role_tag, is_vision_model
 from core.paths import desktop_dir
-from core.sorter_engine import DEFAULT_URL, fetch_all_models
+from core.sorter_engine import (
+    DEFAULT_URL,
+    collect_known_context,
+    encode_image_cached,
+    fetch_all_models,
+)
 from ui.theme import (
     COLORS,
     card_frame_style,
@@ -162,11 +167,24 @@ class ToolboxPage(ctk.CTkFrame):
     def _current_search_preset_signature(self):
         from core.recognition_targets import search_presets
         from core import reference_manager as ref_mgr
-        return tuple(
-            (preset["name"], preset["query"],
-             ref_mgr.count_reference_images("target", preset["name"]))
-            for preset in search_presets(self.app.config_manager.config)[:8]
-        )
+        config = self.app.config_manager.config
+        rows = []
+        for ref_type, items in (
+            ("person", config.get("known_persons", []) or []),
+            ("place", config.get("known_places", []) or []),
+            ("target", search_presets(config)),
+        ):
+            for item in items[:8]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", "")).strip()
+                if name:
+                    rows.append((
+                        ref_type, name,
+                        str(item.get("query") or item.get("description") or name),
+                        ref_mgr.count_reference_images(ref_type, name),
+                    ))
+        return tuple(rows)
 
     def _toggle_more_tools(self):
         """展开/收起更多工具。"""
@@ -411,34 +429,54 @@ class ToolboxPage(ctk.CTkFrame):
                      placeholder_text="例如：红色汽车在停车场 / 室内工作场景 / 多人户外合影").pack(
                          side="left", fill="x", expand=True, padx=(12, 0))
 
-        # 与设置中的通用识别目标联动，点击即可填入同一套搜索描述。
+        # 与设置里的已知人物、地点和自定义对象联动。带参考照片时按
+        # “同一个具体目标”搜索；只有文字时作为普通搜索描述填入。
         from core.recognition_targets import search_presets
         from core import reference_manager as ref_mgr
-        presets = search_presets(self.app.config_manager.config)
-        self._search_preset_signature = tuple(
-            (preset["name"], preset["query"],
-             ref_mgr.count_reference_images("target", preset["name"]))
-            for preset in presets[:8]
-        )
-        if presets:
+        config = self.app.config_manager.config
+        preset_groups = [
+            ("已知人物", "person", config.get("known_persons", []) or []),
+            ("已知地点", "place", config.get("known_places", []) or []),
+            ("自定义对象", "target", search_presets(config)),
+        ]
+        self._search_preset_signature = self._current_search_preset_signature()
+        for group_label, ref_type, raw_items in preset_groups:
+            presets = []
+            for item in raw_items[:8]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", "")).strip()
+                if not name:
+                    continue
+                presets.append({
+                    "name": name,
+                    "query": str(item.get("query") or item.get("search_query")
+                                 or item.get("description") or name).strip(),
+                })
+            if not presets:
+                continue
             preset_row = ctk.CTkFrame(card, fg_color="transparent")
             preset_row.pack(fill="x", padx=24, pady=(0, 12))
             ctk.CTkLabel(
-                preset_row, text="识别目标", font=font_safe(12),
+                preset_row, text=group_label, font=font_safe(12),
                 text_color=COLORS["text_secondary"], width=90,
             ).pack(side="left")
-            for preset in presets[:8]:
-                ref_count = ref_mgr.count_reference_images("target", preset["name"])
+            buttons = ctk.CTkFrame(preset_row, fg_color="transparent")
+            buttons.pack(side="left", fill="x", expand=True, padx=(12, 0))
+            for index, preset in enumerate(presets):
+                ref_count = ref_mgr.count_reference_images(ref_type, preset["name"])
                 ctk.CTkButton(
-                    preset_row,
+                    buttons,
                     text=f"{preset['name']} · {ref_count}图" if ref_count else preset["name"],
                     width=0, height=28,
-                    command=(lambda item=dict(preset): self._run_search_target(item))
+                    command=(lambda item=dict(preset), kind=ref_type:
+                             self._run_search_known_ref(kind, item))
                     if ref_count else (lambda q=preset["query"]: self.search_query_var.set(q)),
                     font=font_safe(11), fg_color=COLORS["card"],
                     hover_color=COLORS["hover"], text_color=COLORS["text"],
                     border_color=COLORS["border"], border_width=1, corner_radius=8,
-                ).pack(side="left", padx=(12 if preset is presets[0] else 6, 0))
+                ).grid(row=index // 4, column=index % 4, sticky="w",
+                       padx=(0, 6), pady=(0, 4))
 
         # 选项与按钮
         opt_row = ctk.CTkFrame(card, fg_color="transparent")
@@ -509,12 +547,18 @@ class ToolboxPage(ctk.CTkFrame):
         threading.Thread(target=_run, daemon=True).start()
 
     def _run_search_target(self, target):
-        """按一个具体对象的参考照片搜索，而不是把名称当普通关键词。"""
+        """兼容旧调用：按一个具体对象的参考照片搜索。"""
+        return self._run_search_known_ref("target", target)
+
+    def _run_search_known_ref(self, ref_type, target):
+        """按人物、地点或对象的参考照片搜索同一个具体目标。"""
         from core import clip_search
         from core import reference_manager as ref_mgr
 
         name = target.get("name", "").strip()
-        refs = ref_mgr.get_reference_images("target", name)
+        labels = {"person": "人物", "place": "地点", "target": "对象"}
+        type_label = labels.get(ref_type, "目标")
+        refs = ref_mgr.get_reference_images(ref_type, name)
         self.search_query_var.set(name)
         if not refs:
             messagebox.showinfo("尚无参考照片", f"请先在设置中为「{name}」添加参考照片。")
@@ -522,6 +566,11 @@ class ToolboxPage(ctk.CTkFrame):
         search_dir = self.search_dir_var.get().strip()
         if not os.path.isdir(search_dir):
             messagebox.showwarning("路径错误", "搜索文件夹不存在")
+            return
+        try:
+            top_n = max(1, min(100, int(self.top_k_var.get() or "10")))
+        except ValueError:
+            messagebox.showwarning("数量错误", "返回数量请输入 1–100 的整数")
             return
         if not clip_search.is_available():
             model = self.toolbox_model_var.get()
@@ -535,13 +584,14 @@ class ToolboxPage(ctk.CTkFrame):
                     "并缓存结果；第一次较慢，之后只处理新增或修改的照片。\n\n现在开始吗？"):
                 return
             from core.object_search import search_object
-            self.search_status_var.set(f"正在识别具体对象「{name}」…")
+            self.search_status_var.set(f"正在识别具体{type_label}「{name}」…")
             self.app.set_task_running(True, f"识别 {name}")
 
             def _vlm_reference_search():
                 results, stats = search_object(
                     search_dir, name, target.get("query", ""), refs, model,
-                    top_n=int(self.top_k_var.get() or "10"),
+                    top_n=top_n,
+                    target_kind=type_label,
                     progress_cb=lambda done, total: self.after(
                         0, lambda: self.search_status_var.set(
                             f"识别 {done}/{total}（其余已复用缓存）")),
@@ -563,7 +613,7 @@ class ToolboxPage(ctk.CTkFrame):
         def _search():
             try:
                 results = clip_search.search_by_reference(
-                    refs, top_n=int(self.top_k_var.get() or "10"),
+                    refs, top_n=top_n,
                     text_hint=target.get("query", ""),
                 )
                 self.after(0, lambda: self._show_search_results(results, len(results)))
@@ -590,6 +640,11 @@ class ToolboxPage(ctk.CTkFrame):
         if not os.path.isdir(search_dir):
             messagebox.showwarning("路径错误", "搜索文件夹不存在")
             return
+        try:
+            top_n = max(1, min(100, int(self.top_k_var.get() or "10")))
+        except ValueError:
+            messagebox.showwarning("数量错误", "返回数量请输入 1–100 的整数")
+            return
 
         from core import clip_search
         clip_ok = clip_search.is_available()
@@ -612,7 +667,7 @@ class ToolboxPage(ctk.CTkFrame):
                     self.after(0, lambda: self.app.set_task_running(False))
                     return
 
-                results = clip_search.search(query, top_n=int(self.top_k_var.get() or "10"))
+                results = clip_search.search(query, top_n=top_n)
                 self.after(0, lambda: self._show_search_results(results, len(results)))
 
             threading.Thread(target=_clip_search, daemon=True).start()
@@ -649,7 +704,7 @@ class ToolboxPage(ctk.CTkFrame):
                     self.after(0, lambda: self.app.set_task_running(False))
                     return
 
-                top_k = min(int(self.top_k_var.get() or "10"), len(images))
+                top_k = min(top_n, len(images))
                 self.after(0, lambda: self.search_status_var.set(f"VLM 分析 0/{len(images)}"))
 
                 results = []
@@ -725,6 +780,18 @@ class ToolboxPage(ctk.CTkFrame):
         ctk.CTkOptionMenu(opt_row, variable=self.desc_style_var,
                           values=["通用", "小红书", "朋友圈", "产品详情", "SEO 标签"],
                           width=140, height=30, font=font_safe(13, "normal")).pack(side="left", padx=(8, 0))
+        known_context = collect_known_context(self.app.config_manager.config)
+        refs_available = any(known_context[key] for key in (
+            "use_person", "use_place", "use_targets"))
+        self.desc_use_ref_var = ctk.BooleanVar(value=False)
+        ref_switch = ctk.CTkSwitch(
+            opt_row, text="使用已知参考（更准确，但更慢）",
+            variable=self.desc_use_ref_var,
+            font=font_safe(11), text_color=COLORS["text_secondary"],
+        )
+        ref_switch.pack(side="left", padx=(20, 0))
+        if not refs_available:
+            ref_switch.configure(state="disabled")
 
         result_frame = ctk.CTkFrame(card, fg_color="transparent")
         result_frame.pack(fill="both", expand=True, padx=24, pady=(8, 20))
@@ -751,6 +818,9 @@ class ToolboxPage(ctk.CTkFrame):
             return
 
         style = self.desc_style_var.get()
+        use_known_refs = bool(self.desc_use_ref_var.get())
+        known_context = (collect_known_context(self.app.config_manager.config)
+                         if use_known_refs else None)
         prompts = {
             "通用": "请详细描述这张图片的内容、场景、人物、色彩和构图。100-200字。",
             "小红书": "请为这张图片写一段小红书风格的文案，带 emoji，活泼亲切，100-150字。",
@@ -768,17 +838,70 @@ class ToolboxPage(ctk.CTkFrame):
             try:
                 prompt = prompts.get(style, prompts["通用"])
                 b64 = encode_image(path, max_size_kb=512)
+                images = [b64]
+                num_predict = 300
+                if use_known_refs:
+                    context = known_context
+                    context_lines = []
+                    image_labels = ["第1张：需要描述的图片"]
+
+                    def _add_text(label, items):
+                        values = []
+                        for item in items:
+                            if not isinstance(item, dict):
+                                continue
+                            name = str(item.get("name", "")).strip()
+                            description = str(item.get("description", "")).strip()
+                            if name:
+                                values.append(f"{name}（{description}）" if description else name)
+                        if values:
+                            context_lines.append(f"{label}：" + "、".join(values))
+
+                    if context["use_person"]:
+                        _add_text("人物", context["known_persons"])
+                    if context["use_place"]:
+                        _add_text("地点", context["known_places"])
+                    if context["use_targets"]:
+                        _add_text("对象", context["known_targets"])
+
+                    reference_budget = 8
+                    for label, groups in (
+                        ("人物", context["person_refs"] if context["use_person"] else []),
+                        ("地点", context["place_refs"] if context["use_place"] else []),
+                        ("对象", context["target_refs"] if context["use_targets"] else []),
+                    ):
+                        for name, refs in groups:
+                            for ref_path in refs:
+                                if reference_budget <= 0:
+                                    break
+                                try:
+                                    images.append(encode_image_cached(ref_path))
+                                    image_labels.append(
+                                        f"第{len(images)}张：{label}「{name}」的参考照片")
+                                    reference_budget -= 1
+                                except Exception:
+                                    continue
+
+                    if context_lines:
+                        prompt += ("\n\n以下是用户预先提供的已知信息。请只在画面或参考图"
+                                   "确实支持时自然融入描述，不要猜测：\n"
+                                   + "\n".join(context_lines))
+                    if len(images) > 1:
+                        prompt += ("\n\n图片顺序：\n" + "\n".join(image_labels)
+                                   + "\n请将第1张与后续参考照片进行比对。")
+                    num_predict = 400
                 r = requests.post(f"{DEFAULT_URL}/api/generate", json={
-                    "model": model, "prompt": prompt, "images": [b64],
-                    "stream": False, "options": {"temperature": 0.4, "num_predict": 300}
+                    "model": model, "prompt": prompt, "images": images,
+                    "stream": False,
+                    "options": {"temperature": 0.4, "num_predict": num_predict}
                 }, timeout=300)
                 if r.status_code == 200:
                     desc = r.json().get("response", "").strip()
-                    self.app.root.after(0, lambda: self._show_describe_result(desc))
+                    self._safe_after(lambda: self._show_describe_result(desc))
                 else:
-                    self.app.root.after(0, lambda: self._show_describe_result(f"错误：HTTP {r.status_code}"))
+                    self._safe_after(lambda: self._show_describe_result(f"错误：HTTP {r.status_code}"))
             except Exception as e:
-                self.app.root.after(0, lambda error=e: self._show_describe_result(f"错误：{error}"))
+                self._safe_after(lambda error=e: self._show_describe_result(f"错误：{error}"))
 
         threading.Thread(target=_describe, daemon=True).start()
 

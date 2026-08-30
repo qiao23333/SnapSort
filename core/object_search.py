@@ -23,11 +23,12 @@ def _signature(path):
     return [stat.st_mtime_ns, stat.st_size]
 
 
-def _target_fingerprint(name, description, model, references):
+def _target_fingerprint(name, description, model, references, target_kind="对象"):
     payload = {
         "name": name,
         "description": description,
         "model": model,
+        "target_kind": target_kind,
         "references": [(os.path.abspath(path), _signature(path)) for path in references],
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -67,7 +68,7 @@ def _parse_matches(response, candidate_count):
 def search_object(
         folder, name, description, references, model,
         url=DEFAULT_URL, top_n=10, batch_size=3,
-        progress_cb=None, cancel_cb=None):
+        progress_cb=None, cancel_cb=None, target_kind="对象"):
     """把参考图和候选图分批交给 VLM；只推理未缓存或已变化的照片。"""
     references = [path for path in references if os.path.isfile(path)][:2]
     if not references:
@@ -79,7 +80,8 @@ def search_object(
         for filename in files
         if is_image_file(os.path.join(root, filename))
     )
-    fingerprint = _target_fingerprint(name, description, model, references)
+    fingerprint = _target_fingerprint(
+        name, description, model, references, target_kind=target_kind)
     with _cache_lock:
         cache = _load_cache()
         target_cache = cache.setdefault(fingerprint, {})
@@ -122,11 +124,11 @@ def search_object(
             continue
 
         prompt = (
-            f"前 {len(reference_images)} 张是具体对象「{name}」的参考照片。"
-            f"对象补充说明：{description or '无'}。\n"
+            f"前 {len(reference_images)} 张是具体{target_kind}「{name}」的参考照片。"
+            f"{target_kind}补充说明：{description or '无'}。\n"
             f"后面 {len(valid)} 张依次是候选照片 1 到 {len(valid)}。"
-            "请判断每张候选照片里是否出现了与参考照片中同一个具体对象；"
-            "不能因为属于同类物品就算命中。只回复 MATCHES: 后接候选编号，"
+            f"请判断每张候选照片里是否出现了参考照片中的同一个具体{target_kind}；"
+            "不能仅凭相似类别或相似场景就算命中。只回复 MATCHES: 后接候选编号，"
             "例如 MATCHES: 1,3；全部不匹配则回复 MATCHES: 无。"
         )
         try:

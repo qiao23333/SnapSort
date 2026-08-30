@@ -84,18 +84,30 @@ def scan_photos(directory):
     return photos
 
 
-def get_datetime(image_path):
-    """从 EXIF 或文件修改时间获取完整 datetime 对象。"""
+def get_datetime_info(image_path):
+    """返回 ``(datetime, source)``，同时保留时间来源供可信度提示。
+
+    source 为 ``exif_original`` / ``exif_digitized`` / ``exif_datetime`` /
+    ``file_mtime`` / ``unavailable``。文件修改时间只是一种低可信回退，不能
+    等同于真实拍摄时间。
+    """
     opened = None
     try:
         img, opened = _safe_open_image(image_path)
         exif = img.getexif()
         if exif:
-            for tag in (36867, 36868, 306):
+            for tag, source in (
+                (36867, "exif_original"),
+                (36868, "exif_digitized"),
+                (306, "exif_datetime"),
+            ):
                 s = exif.get(tag)
                 if s:
                     try:
-                        return datetime.strptime(s.strip(), "%Y:%m:%d %H:%M:%S")
+                        return (
+                            datetime.strptime(s.strip(), "%Y:%m:%d %H:%M:%S"),
+                            source,
+                        )
                     except ValueError:
                         pass
     except Exception:
@@ -103,9 +115,14 @@ def get_datetime(image_path):
     finally:
         _cleanup_temp(opened, image_path)
     try:
-        return datetime.fromtimestamp(os.path.getmtime(image_path))
+        return datetime.fromtimestamp(os.path.getmtime(image_path)), "file_mtime"
     except Exception:
-        return None
+        return None, "unavailable"
+
+
+def get_datetime(image_path):
+    """从 EXIF 或文件修改时间获取完整 datetime 对象。"""
+    return get_datetime_info(image_path)[0]
 
 
 def get_date(image_path):
@@ -526,6 +543,17 @@ class EventPipeline:
             return self
 
         log(f"📸 {len(photos)} 张")
+
+        time_sources = [get_datetime_info(path)[1] for path in photos]
+        fallback_count = sum(source == "file_mtime" for source in time_sources)
+        unavailable_count = sum(source == "unavailable" for source in time_sources)
+        if fallback_count:
+            log(
+                f"⚠️ {fallback_count} 张没有可用 EXIF 拍摄时间，"
+                "将使用文件修改时间（低可信，复制/转发后可能不准确）"
+            )
+        if unavailable_count:
+            log(f"⚠️ {unavailable_count} 张无法取得任何时间，将放入 unknown 分组")
 
         # 截图/转发图检测
         screenshots = [p for p in photos if is_screenshot(p)]

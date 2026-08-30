@@ -5,7 +5,7 @@ setlocal
 cd /d "%~dp0.."
 
 echo ========================================
-echo   SnapSort Windows 打包脚本 (v3.6.0)
+echo   SnapSort Windows 打包脚本 (v3.7.0)
 echo ========================================
 echo.
 

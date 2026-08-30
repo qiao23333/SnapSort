@@ -18,8 +18,9 @@ class HistoryPage(ctk.CTkFrame):
         self.app = app
         self.configure(fg_color=COLORS["bg"])
         self.history = HistoryManager()
+        self._loaded_signature = None
+        self._has_loaded = False
         self._build_ui()
-        self.refresh()
 
     def _build_ui(self):
         ctk.CTkLabel(self, text="历史记录", font=font_safe(28, "bold"),
@@ -45,6 +46,11 @@ class HistoryPage(ctk.CTkFrame):
         self.list_container.pack(fill="both", expand=True, padx=24, pady=20)
 
     def refresh(self):
+        # 其他页面会通过独立的 HistoryManager 写入文件，刷新时重新读取，
+        # 同时记录文件签名供之后按需判断，避免每次切页都重建整张列表。
+        self.history.records = self.history.load()
+        self._loaded_signature = self._history_signature()
+        self._has_loaded = True
         for widget in self.list_container.winfo_children():
             widget.destroy()
 
@@ -82,6 +88,18 @@ class HistoryPage(ctk.CTkFrame):
                           command=lambda rid=r.get("id"): self._delete(rid),
                           fg_color=COLORS["danger"], hover_color="#E6352B",
                           text_color="white", font=font_safe(12, "normal")).pack(side="right")
+
+    def _history_signature(self):
+        try:
+            stat = self.history.history_path.stat()
+            return stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return None
+
+    def on_show(self):
+        """历史文件未变化时保留现有组件，避免往返切页重复重建。"""
+        if not self._has_loaded or self._loaded_signature != self._history_signature():
+            self.refresh()
 
     def _open_path(self, path):
         if not path or not os.path.isdir(path):

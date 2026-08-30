@@ -252,6 +252,10 @@ class SnapSortApp:
         if page_key not in self.page_factories:
             return
 
+        # 重复点击当前导航不应重新 pack 页面、更不应触发磁盘扫描。
+        if page_key == self.current_page:
+            return
+
         if page_key not in self.pages:
             page_class = self.page_factories[page_key]
             self.pages[page_key] = page_class(
@@ -267,9 +271,20 @@ class SnapSortApp:
         # 高亮当前导航
         self.nav_buttons[page_key].configure(**sidebar_button_active_style())
 
-        # 刷新页面数据
-        if hasattr(self.pages[page_key], "refresh"):
-            self.pages[page_key].refresh()
+        # 先完成页面切换，让导航点击立即得到视觉反馈；数据刷新放到
+        # 当前事件循环空闲时执行。页面可通过 on_show 自行判断数据是否
+        # 已失效，避免在页面之间来回切换时重复扫描磁盘和重建组件。
+        self.root.after_idle(lambda key=page_key: self._refresh_visible_page(key))
+
+    def _refresh_visible_page(self, page_key):
+        """仅刷新仍处于前台的页面，忽略快速切页留下的过期任务。"""
+        if page_key != self.current_page or page_key not in self.pages:
+            return
+        page = self.pages[page_key]
+        if hasattr(page, "on_show"):
+            page.on_show()
+        elif hasattr(page, "refresh"):
+            page.refresh()
 
     def set_task_running(self, running, label=""):
         """全局任务状态指示器：后台任务运行/结束时切换侧栏指示器可见性。
