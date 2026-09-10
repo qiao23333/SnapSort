@@ -5,6 +5,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 SnapSort 是一个本地运行的图片素材整理工具。它读取文件夹中的照片，按内容或拍摄事件分组，并提供重命名、查重、格式转换和图片搜索等常用操作。需要识图时通过本机 Ollama 运行，默认不上传照片。
+<img width="1282" height="892" alt="1" src="https://github.com/user-attachments/assets/f55f89db-b073-4a05-91d0-4c7b49dd9dcb" />
 
 ## ✨ 核心功能
 
